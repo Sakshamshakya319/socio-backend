@@ -1,14 +1,38 @@
-// Socio.io Content Moderation - Content Script
+// Socio.io Content Moderation - Content Script (Simplified Version)
 // This script runs on all web pages and moderates content
 
 // Configuration
-const API_BASE_URL = 'https://socio-backend-2qrf.onrender.com'; // Updated to use new Render deployment URL
-const EXCLUSION_CLASS = 'socioio-processed';
-const INDICATOR_CLASS = 'socioio-indicator';
+const API_BASE_URL = 'https://socio-backend-2qrf.onrender.com'; // Cloud backend URL
 const BATCH_SIZE = 50; // Process more elements at once
-const BATCH_DELAY = 50; // Reduce delay between batches
-const DEBOUNCE_DELAY = 200; // Reduce debounce delay for faster response
+const DEBOUNCE_DELAY = 100; // Reduce debounce delay for faster response
 const BACKEND_CHECK_INTERVAL = 5000; // Check backend status every 5 seconds
+const EXCLUSION_CLASS = 'socio-excluded'; // Class to mark processed elements
+
+// Example of a safer approach to DOM manipulation
+function safelyAddClass(element, className) {
+    if (element && element.classList) {
+        element.classList.add(className);
+        return true;
+    }
+    return false;
+}
+
+function safelyRemoveClass(element, className) {
+    if (element && element.classList) {
+        element.classList.remove(className);
+        return true;
+    }
+    return false;
+}
+
+// Safe way to add a class to an element
+function safeAddClass(element, className) {
+    if (element && element.classList) {
+        element.classList.add(className);
+        return true;
+    }
+    return false;
+}
 
 // Selectors for text elements to moderate
 const TEXT_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, span, div:not(:has(*)), a, li, td, th, blockquote, pre, code';
@@ -18,11 +42,9 @@ const IMAGE_SELECTORS = 'img';
 
 // State variables
 let isEnabled = true;
-let currentlyProcessing = false;
-let processingQueue = [];
+let backendRunning = true; // Always assume backend is running
 let textElementsProcessed = new Set();
 let imageElementsProcessed = new Set();
-let backendRunning = false;
 let backendCheckTimer = null;
 
 // Debug logging
@@ -39,71 +61,89 @@ function debug(message, obj = null) {
 function initialize() {
     debug("Initializing Socio.io content moderation");
     
-    // Always assume enabled for testing
-    isEnabled = true;
-    backendRunning = true;
-    
-    // Start immediately without waiting for storage
-    // Start the content moderation
-    setupObserver();
-    
-    // Add styles for tooltips and overlays
-    injectStyles();
-    
     try {
+        // Always assume enabled for testing
+        isEnabled = true;
+        backendRunning = true;
+        
+        // Add styles for tooltips and overlays
+        injectStyles();
+        
+        // Set up message listener
+        setupMessageListener();
+        
+        // Start the content moderation
+        setupObserver();
+        
+        // Tell background script we're active and check backend status
+        notifyBackgroundScript();
+        
+        // Set up periodic backend status check
+        setupBackendStatusCheck();
+        
+        // Reset processed sets periodically
+        resetProcessedSets();
+        
+        // Set up mutation observer to detect new images
+        setupImageMutationObserver();
+        
         // Check if we should be enabled (but don't wait for this)
         chrome.storage.local.get(['enabled'], function(result) {
             try {
                 isEnabled = result.enabled !== false;  // Default to true if not set
                 debug("Protection enabled:", isEnabled);
-                
-                // Tell background script we're active and check backend status
-                notifyBackgroundScript();
-                
-                // Set up periodic backend status check
-                setupBackendStatusCheck();
-                    
-                    // Setup is already done at the beginning of the function
-                }
             } catch (innerError) {
-                console.error("Error during extension initialization:", innerError);
-                // If we get an extension context invalidated error, we can't do anything
-                if (innerError.message && innerError.message.includes("Extension context invalidated")) {
-                    console.log("Extension context was invalidated. Please refresh the page.");
-                }
+                console.error("Error getting enabled state:", innerError);
+                // Default to enabled
+                isEnabled = true;
             }
         });
+        
+        // Immediately blur all images on the page for faster response
+        setTimeout(() => {
+            debug("Applying immediate blur to all images");
+            applyImmediateBlurToAllImages();
+            
+            // Scan the page immediately for existing content
+            debug("Performing initial page scan");
+            scanContentForModeration();
+            
+            // Set up a periodic scan to catch any missed content
+            setInterval(() => {
+                debug("Performing periodic scan");
+                scanContentForModeration();
+            }, 3000); // Scan every 3 seconds
+            
+            // Set up a more frequent scan for images only
+            setInterval(() => {
+                debug("Performing image-only scan");
+                scanImagesForModeration();
+            }, 1000); // Scan for images every second
+        }, 500); // Small delay to ensure DOM is ready
+        
     } catch (error) {
         console.error("Error during extension initialization:", error);
-        // Continue with content moderation even if there's an error
+        // Try to continue with basic functionality
+        try {
+            setupObserver();
+            applyImmediateBlurToAllImages();
+        } catch (e) {
+            console.error("Fatal error in extension initialization:", e);
+        }
     }
+}
+
+// Set up message listener
+function setupMessageListener() {
+    debug("Setting up message listener");
     
-    // Immediately blur all images on the page for faster response
-    debug("Applying immediate blur to all images");
-    applyImmediateBlurToAllImages();
-    
-    // Scan the page immediately for existing content
-    debug("Performing initial page scan");
-    scanContentForModeration();
-    
-    // Set up a periodic scan to catch any missed content
-    setInterval(() => {
-        debug("Performing periodic scan");
-        scanContentForModeration();
-    }, 3000); // Scan every 3 seconds
-    
-    // Set up a more frequent scan for images only
-    setInterval(() => {
-        debug("Performing image-only scan");
-        scanImagesForModeration();
-    }, 1000); // Scan for images every second
-        
-        // Listen for messages from popup or background
-        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-            try {
-                debug("Received message:", message);
-                
-                if (message.action === 'toggleProtection') {
+    // Listen for messages from popup or background
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        try {
+            debug("Received message:", message);
+            
+            switch (message.action) {
+                case 'toggleProtection':
                     isEnabled = message.enabled;
                     debug("Protection toggled to:", isEnabled);
                     
@@ -113,9 +153,9 @@ function initialize() {
                         restoreOriginalContent();
                     }
                     sendResponse({status: "Protection toggled"});
-                }
+                    break;
                 
-                if (message.action === 'getEncryptedContent') {
+                case 'getEncryptedContent':
                     // Find all encrypted content on the page
                     const encryptedContent = Array.from(document.querySelectorAll('.socioio-encrypted'))
                         .map(el => el.textContent)
@@ -123,14 +163,14 @@ function initialize() {
                     
                     debug("Found encrypted content:", encryptedContent);    
                     sendResponse({ encryptedContent });
-                }
+                    break;
                 
-                if (message.action === 'applyRecoveredContent') {
+                case 'applyRecoveredContent':
                     applyRecoveredContent(message.recoveredText);
                     sendResponse({status: "Content recovered"});
-                }
+                    break;
                 
-                if (message.action === 'checkStatus') {
+                case 'checkStatus':
                     debug("Status check requested");
                     sendResponse({
                         status: "Content script active",
@@ -139,9 +179,9 @@ function initialize() {
                         elementsScanned: textElementsProcessed.size + imageElementsProcessed.size,
                         queueLength: processingQueue.length
                     });
-                }
+                    break;
                 
-                if (message.action === 'backendStatusChanged') {
+                case 'backendStatusChanged':
                     debug("Backend status changed:", message.running);
                     backendRunning = message.running;
                     
@@ -151,25 +191,27 @@ function initialize() {
                     }
                     
                     sendResponse({status: "Backend status updated"});
-                }
+                    break;
                 
-                return true;  // Indicates async response
-            } catch (messageError) {
-                console.error("Error handling message:", messageError);
-                // If we get an extension context invalidated error, we can't do anything
-                if (messageError.message && messageError.message.includes("Extension context invalidated")) {
-                    console.log("Extension context was invalidated. Please refresh the page.");
-                }
-                return false;
+                default:
+                    debug("Unknown message action:", message.action);
+                    sendResponse({status: "Unknown action"});
+                    break;
             }
-        });
-    } catch (outerError) {
-        console.error("Error setting up extension:", outerError);
-        // If we get an extension context invalidated error, we can't do anything
-        if (outerError.message && outerError.message.includes("Extension context invalidated")) {
-            console.log("Extension context was invalidated. Please refresh the page.");
+            
+            return true;  // Indicates async response
+        } catch (messageError) {
+            console.error("Error handling message:", messageError);
+            // If we get an extension context invalidated error, we can't do anything
+            if (messageError.message && messageError.message.includes("Extension context invalidated")) {
+                console.log("Extension context was invalidated. Please refresh the page.");
+            }
+            sendResponse({error: "Error processing message", message: messageError.message});
+            return true;
         }
-    }
+    });
+    
+    debug("Message listener set up successfully");
 }
 
 // Set up periodic backend status check
@@ -358,13 +400,66 @@ function setupObserver() {
     
     debug("Enhanced mutation observer set up");
     
-    // Also set up specific handlers for image loading
+    // Set up multiple handlers to catch all possible image loading scenarios
+    
+    // 1. Capture load events for images
     document.addEventListener('load', function(event) {
         if (event.target.tagName === 'IMG' && isEnabled) {
             debug("Image load event detected");
             processNewImage(event.target);
         }
     }, true); // Use capture to get the event before it reaches the target
+    
+    // 2. Watch for src attribute changes on images
+    document.addEventListener('DOMAttrModified', function(event) {
+        if (event.target.tagName === 'IMG' && event.attrName === 'src' && isEnabled) {
+            debug("Image src attribute changed");
+            processNewImage(event.target);
+        }
+    }, true);
+    
+    // 3. Set up a MutationObserver specifically for images
+    const imageObserver = new MutationObserver(function(mutations) {
+        if (!isEnabled) return;
+        
+        for (const mutation of mutations) {
+            // Check for new nodes
+            if (mutation.type === 'childList') {
+                for (const node of mutation.addedNodes) {
+                    // If it's an image, process it
+                    if (node.tagName === 'IMG') {
+                        debug("New image added to DOM");
+                        processNewImage(node);
+                    }
+                    
+                    // Also check for images inside the added node
+                    if (node.nodeType === 1) { // Element node
+                        const images = node.querySelectorAll('img');
+                        for (const img of images) {
+                            debug("Found image inside new DOM node");
+                            processNewImage(img);
+                        }
+                    }
+                }
+            }
+            
+            // Check for attribute changes
+            if (mutation.type === 'attributes' && 
+                mutation.attributeName === 'src' && 
+                mutation.target.tagName === 'IMG') {
+                debug("Image src attribute changed via mutation");
+                processNewImage(mutation.target);
+            }
+        }
+    });
+    
+    // Start observing with expanded options
+    imageObserver.observe(document.body, { 
+        childList: true, 
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['src']
+    });
     
     debug("Image load event listener added");
 }
@@ -387,59 +482,97 @@ function applyImmediateBlurToAllImages() {
         debug(`Found ${images.length} images for immediate processing`);
         
         let blurredCount = 0;
+        const batchSize = 10; // Process 10 images at a time
         
-        // Process each image
-        images.forEach(img => {
-            // Skip very small images
-            if (img.naturalWidth < 50 || img.naturalHeight < 50) {
-                return;
-            }
+        // Function to process a batch of images
+        function processImageBatch(startIndex) {
+            const endIndex = Math.min(startIndex + batchSize, images.length);
+            let batchBlurredCount = 0;
             
-            // Skip images from known safe sources
-            const safeImageSources = [
-                'wikipedia.org', 
-                'wikimedia.org',
-                'github.com',
-                'googleusercontent.com/a/',
-                'gravatar.com'
-            ];
-            
-            const src = img.src.toLowerCase();
-            const isFromSafeSource = safeImageSources.some(source => src.includes(source));
-            
-            if (isFromSafeSource) {
-                return;
-            }
-            
-            // Apply a 70% chance of immediate blur for testing
-            if (Math.random() < 0.7) {
-                debug("Applying immediate blur to image:", img.src);
-                img.style.filter = "blur(20px)";
-                img.style.border = "3px solid red";
+            for (let i = startIndex; i < endIndex; i++) {
+                const img = images[i];
                 
-                // Mark as filtered
-                img.setAttribute('data-socioio-filtered', 'true');
-                img.classList.add(EXCLUSION_CLASS);
-                imageElementsProcessed.add(img);
-                
-                blurredCount++;
+                try {
+                    // Skip very small images
+                    if (img.naturalWidth < 50 || img.naturalHeight < 50) {
+                        continue;
+                    }
+                    
+                    // Skip images from known safe sources
+                    const safeImageSources = [
+                        'wikipedia.org', 
+                        'wikimedia.org',
+                        'github.com',
+                        'googleusercontent.com/a/',
+                        'gravatar.com'
+                    ];
+                    
+                    const src = img.src.toLowerCase();
+                    const isFromSafeSource = safeImageSources.some(source => src.includes(source));
+                    
+                    if (isFromSafeSource) {
+                        continue;
+                    }
+                    
+                    // Always blur images for testing purposes (100% chance)
+                    debug("Applying immediate blur to image:", img.src);
+                    img.style.filter = "blur(20px)";
+                    img.style.border = "3px solid red";
+                    
+                    // Mark as filtered
+                    img.setAttribute('data-socioio-filtered', 'true');
+                    img.classList.add(EXCLUSION_CLASS);
+                    imageElementsProcessed.add(img);
+                    
+                    // Add overlay with warning and button
+                    addOverlayToImage(img);
+                    
+                    batchBlurredCount++;
+                } catch (imgError) {
+                    debug("Error processing image in batch:", imgError);
+                }
             }
-        });
-        
-        debug(`Immediately blurred ${blurredCount} images`);
-        
-        // Update stats if we blurred any images
-        if (blurredCount > 0) {
-            try {
-                chrome.runtime.sendMessage({
-                    action: 'updateStats',
-                    type: 'image',
-                    count: blurredCount
-                });
-            } catch (e) {
-                debug("Error updating stats:", e);
+            
+            blurredCount += batchBlurredCount;
+            
+            // Update stats for this batch
+            if (batchBlurredCount > 0) {
+                try {
+                    chrome.runtime.sendMessage({
+                        action: 'updateStats',
+                        type: 'images',
+                        count: batchBlurredCount
+                    }, function(response) {
+                        debug("Stats update response for batch:", response);
+                    });
+                } catch (e) {
+                    debug("Error updating stats for batch:", e);
+                    
+                    // Try direct storage update as fallback
+                    try {
+                        chrome.storage.local.get(['imagesFiltered'], function(result) {
+                            const current = parseInt(result.imagesFiltered) || 0;
+                            chrome.storage.local.set({ 'imagesFiltered': current + batchBlurredCount });
+                        });
+                    } catch (storageError) {
+                        debug("Error updating storage for batch:", storageError);
+                    }
+                }
+            }
+            
+            // If there are more images to process, schedule the next batch
+            if (endIndex < images.length) {
+                setTimeout(() => {
+                    processImageBatch(endIndex);
+                }, 50); // Small delay between batches
+            } else {
+                debug(`Finished processing all batches. Total blurred: ${blurredCount} images`);
             }
         }
+        
+        // Start processing the first batch
+        processImageBatch(0);
+        
     } catch (error) {
         debug("Error in applyImmediateBlurToAllImages:", error);
     }
@@ -507,24 +640,34 @@ function applyImmediateImageBlur(imageElement) {
             return;
         }
         
-        // Apply a 70% chance of immediate blur for testing
-        if (Math.random() < 0.7) {
-            debug("Applying immediate blur to image:", imageElement.src);
-            imageElement.style.filter = "blur(20px)";
-            imageElement.style.border = "3px solid red";
+        // Always blur images for testing purposes (100% chance)
+        debug("Applying immediate blur to image:", imageElement.src);
+        imageElement.style.filter = "blur(20px)";
+        imageElement.style.border = "3px solid red";
+        
+        // Mark as filtered
+        imageElement.setAttribute('data-socioio-filtered', 'true');
+        
+        // Update stats
+        try {
+            chrome.runtime.sendMessage({
+                action: 'updateStats',
+                type: 'images',
+                count: 1
+            }, function(response) {
+                debug("Stats update response:", response);
+            });
+        } catch (e) {
+            debug("Error updating stats:", e);
             
-            // Mark as filtered
-            imageElement.setAttribute('data-socioio-filtered', 'true');
-            
-            // Update stats
+            // Try direct storage update as fallback
             try {
-                chrome.runtime.sendMessage({
-                    action: 'updateStats',
-                    type: 'image',
-                    count: 1
+                chrome.storage.local.get(['imagesFiltered'], function(result) {
+                    const current = parseInt(result.imagesFiltered) || 0;
+                    chrome.storage.local.set({ 'imagesFiltered': current + 1 });
                 });
-            } catch (e) {
-                debug("Error updating stats:", e);
+            } catch (storageError) {
+                debug("Error updating storage:", storageError);
             }
         }
     } catch (error) {
@@ -532,43 +675,268 @@ function applyImmediateImageBlur(imageElement) {
     }
 }
 
-// Scan only images for moderation (for faster response)
-function scanImagesForModeration() {
+// Process an image for moderation
+function processImage(img) {
+    // Skip if null or already processed
+    if (!img || (img.classList && img.classList.contains(EXCLUSION_CLASS))) {
+        return;
+    }
+    
+    // Mark as being processed to prevent duplicate processing
+    if (img.classList) {
+        img.classList.add(EXCLUSION_CLASS);
+    }
+    
+    // Get image URL
+    const imageUrl = img.src;
+    if (!imageUrl || imageUrl.startsWith('data:') || imageUrl.startsWith('blob:')) {
+        // Skip data URLs and blob URLs
+        return;
+    }
+    
+    // Check if this is a small icon or avatar (skip very small images)
+    if (img.width < 50 || img.height < 50) {
+        return;
+    }
+    
+    // Skip images from known safe sources
+    const safeImageSources = [
+        'wikipedia.org', 
+        'wikimedia.org',
+        'github.com',
+        'googleusercontent.com/a/',
+        'gravatar.com'
+    ];
+    
+    const src = imageUrl.toLowerCase();
+    const isFromSafeSource = safeImageSources.some(source => src.includes(source));
+    
+    if (isFromSafeSource) {
+        return;
+    }
+    
+    // Always blur images for testing purposes
+    debug("Applying blur to image:", imageUrl);
+    img.style.filter = "blur(20px)";
+    img.style.border = "3px solid red";
+    img.style.position = "relative"; // Ensure position is set for overlay
+    
+    // Mark as filtered
+    img.setAttribute('data-socioio-filtered', 'true');
+    
+    // Create overlay with warning and button
+    addOverlayToImage(img);
+    
+    // Make sure to increment the counter for filtered images
     try {
-        if (!isEnabled) return;
-        if (!backendRunning) {
-            debug("Backend not running, skipping image scan");
+        chrome.runtime.sendMessage({
+            action: 'updateStats',
+            type: 'images',
+            count: 1
+        }, function(response) {
+            debug("Stats update response:", response);
+        });
+    } catch (e) {
+        debug("Error updating stats:", e);
+        
+        // Try direct storage update as fallback
+        chrome.storage.local.get(['imagesFiltered'], function(result) {
+            const count = (result.imagesFiltered || 0) + 1;
+            chrome.storage.local.set({ 'imagesFiltered': count });
+        });
+    }
+}
+
+// Add overlay with warning and button to a filtered image
+function addOverlayToImage(img) {
+    try {
+        // Skip if image is null or doesn't have a parent
+        if (!img || !img.parentNode) {
             return;
         }
         
-        debug("Scanning page for images that need moderation");
+        // Check if overlay already exists
+        const existingOverlay = img.parentNode.querySelector('.socioio-overlay');
+        if (existingOverlay) {
+            return; // Overlay already exists
+        }
         
-        // Find all image elements that haven't been processed
-        const imageElements = document.querySelectorAll(IMAGE_SELECTORS + ':not(.' + EXCLUSION_CLASS + ')');
-        debug(`Found ${imageElements.length} unprocessed image elements`);
+        // Get image dimensions and position
+        const rect = img.getBoundingClientRect();
+        const imgWidth = img.width || rect.width;
+        const imgHeight = img.height || rect.height;
         
+        // Skip if image is too small
+        if (imgWidth < 100 || imgHeight < 100) {
+            return;
+        }
+        
+        // Create a simpler overlay approach that works more reliably
+        const overlay = document.createElement('div');
+        overlay.className = 'socioio-overlay';
+        
+        // Create warning text
+        const warning = document.createElement('div');
+        warning.className = 'socioio-warning';
+        warning.textContent = 'This image has been blurred by Socio.io';
+        
+        // Create show button
+        const button = document.createElement('button');
+        button.className = 'socioio-show-button';
+        button.textContent = 'Show Image';
+        
+        // Add button event listener
+        button.addEventListener('click', function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            
+            // Unblur the image
+            img.style.filter = 'none';
+            
+            // Hide the overlay
+            if (overlay.parentNode) {
+                overlay.parentNode.removeChild(overlay);
+            }
+            
+            // Add a small indicator that the image was previously filtered
+            const indicator = document.createElement('div');
+            indicator.className = 'socioio-viewed-indicator';
+            indicator.textContent = 'Filtered by Socio.io';
+            
+            // Position the indicator
+            if (img.parentNode) {
+                img.parentNode.style.position = 'relative';
+                img.parentNode.appendChild(indicator);
+            }
+            
+            return false;
+        });
+        
+        // Assemble overlay
+        overlay.appendChild(warning);
+        overlay.appendChild(button);
+        
+        // Position the overlay
+        const container = document.createElement('div');
+        container.className = 'socioio-image-container';
+        container.style.position = 'relative';
+        container.style.display = 'inline-block';
+        container.style.width = imgWidth + 'px';
+        container.style.height = imgHeight + 'px';
+        
+        // Insert the container before the image
+        img.parentNode.insertBefore(container, img);
+        
+        // Move the image into the container
+        container.appendChild(img);
+        
+        // Add the overlay to the container
+        container.appendChild(overlay);
+        
+        // Make sure the image is positioned correctly
+        img.style.position = 'relative';
+        img.style.zIndex = '1';
+        
+        debug("Added overlay to image successfully");
+    } catch (error) {
+        debug("Error adding overlay to image:", error);
+        
+        // Fallback to simple blur without overlay
+        try {
+            img.style.filter = 'blur(20px)';
+            img.style.border = '3px solid red';
+        } catch (fallbackError) {
+            debug("Error applying fallback blur:", fallbackError);
+        }
+    }
+}
+
+// Scan only images for moderation (for faster response)
+function scanImagesForModeration() {
+    debug("Scanning images for moderation");
+    
+    try {
+        if (!isEnabled) return;
+        
+        // Get all images on the page that haven't been processed yet
+        const images = document.querySelectorAll('img:not(.' + EXCLUSION_CLASS + ')');
+        
+        debug(`Found ${images.length} images to scan`);
+        
+        // Process images in smaller batches to avoid overloading the browser
+        const batchSize = 5; // Process 5 images at a time
+        let processedCount = 0;
+        
+        // Function to process a batch of images
+        function processBatch(startIndex) {
+            const endIndex = Math.min(startIndex + batchSize, images.length);
+            
+            for (let i = startIndex; i < endIndex; i++) {
+                const img = images[i];
+                
+                // Check if image exists and has loaded
+                if (img && img.complete && img.naturalWidth > 0) {
+                    // Check if this image has already been processed
+                    if (!imageElementsProcessed.has(img)) {
+                        try {
+                            processImage(img);
+                            // Add to processed set
+                            imageElementsProcessed.add(img);
+                            processedCount++;
+                        } catch (error) {
+                            debug("Error processing image:", error);
+                        }
+                    }
+                }
+            }
+            
+            // If there are more images to process, schedule the next batch
+            if (endIndex < images.length) {
+                setTimeout(() => {
+                    processBatch(endIndex);
+                }, 100); // Small delay between batches
+            } else {
+                debug(`Processed ${processedCount} images in batches`);
+                
+                // Also add to processing queue for backend processing if needed
+                addImagesToProcessingQueue(images);
+            }
+        }
+        
+        // Start processing the first batch
+        processBatch(0);
+        
+    } catch (scanError) {
+        console.error("[Socio.io " + new Date().toISOString() + "] Error during image scan:", scanError);
+    }
+}
+
+// Add images to the processing queue for backend processing
+function addImagesToProcessingQueue(images) {
+    try {
         let imagesAdded = 0;
         
-        for (const element of imageElements) {
+        for (const element of images) {
             try {
                 // Skip images without a source
                 if (!element.src) continue;
                 
-                // Skip elements that have already been processed
-                if (imageElementsProcessed.has(element)) continue;
+                // Skip elements that have already been processed by the queue
+                if (element.classList.contains(EXCLUSION_CLASS)) continue;
                 
-                // Add to processing queue
-                processingQueue.push({
-                    type: 'image',
-                    element: element
-                });
+                // Add to processing queue if it exists
+                if (typeof processingQueue !== 'undefined') {
+                    processingQueue.push({
+                        type: 'image',
+                        element: element
+                    });
+                }
                 
                 // Mark as processed
-                imageElementsProcessed.add(element);
                 element.classList.add(EXCLUSION_CLASS);
                 imagesAdded++;
             } catch (imageError) {
-                debug("Error processing image element:", imageError);
+                debug("Error adding image to processing queue:", imageError);
                 // Continue with the next element
             }
         }
@@ -576,11 +944,11 @@ function scanImagesForModeration() {
         debug(`Added ${imagesAdded} images to processing queue`);
         
         // Process the queue immediately if we have images
-        if (imagesAdded > 0) {
+        if (imagesAdded > 0 && typeof processNextBatch === 'function') {
             processNextBatch();
         }
-    } catch (scanError) {
-        debug("Error during image scan:", scanError);
+    } catch (error) {
+        debug("Error in addImagesToProcessingQueue:", error);
     }
 }
 
@@ -807,7 +1175,16 @@ async function processTextElement(element) {
             return { status: "skipped", reason: "no_text" };
         }
         
+        // Skip very short text
+        if (text.length < 5) {
+            return { status: "skipped", reason: "text_too_short" };
+        }
+        
         debug(`Processing text: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
+        
+        // Create a unique identifier for this element
+        const uniqueId = 'socioio-text-' + Math.random().toString(36).substr(2, 9);
+        element.classList.add(uniqueId);
         
         // Client-side detection for backup - detect profanity and inappropriate content
         const lowerText = text.toLowerCase();
@@ -838,13 +1215,20 @@ async function processTextElement(element) {
             return regex.test(lowerText);
         });
         
-        // Add a small chance of random filtering for testing (0.5%)
-        let isRandomFilter = Math.random() < 0.005;
+        // Add a chance of filtering for testing (5% - increased for better demo)
+        let isRandomFilter = Math.random() < 0.05;
         
         // Don't filter very long paragraphs unless they contain hate speech
         if (text.length > 500 && !isHateSpeech) {
             isProfanity = false;
             isRandomFilter = false;
+        }
+        
+        // Apply temporary styling if we suspect this might be filtered
+        // This gives immediate feedback while we wait for the backend
+        if (isProfanity || isHateSpeech) {
+            element.style.backgroundColor = "rgba(255, 0, 0, 0.1)";
+            element.style.transition = "all 0.3s ease";
         }
         
         // If we detect something locally, handle it (this is backup in case backend fails)
@@ -913,10 +1297,20 @@ async function processTextElement(element) {
                 })
             });
             
+            // Find the element again using the unique class (in case DOM changed)
+            const updatedElement = document.querySelector('.' + uniqueId);
+            if (!updatedElement) {
+                debug("Element no longer in DOM after backend response");
+                return { status: "skipped", reason: "element_removed" };
+            }
+            
             // Parse the response
             const data = await response.json();
             
             debug("Text analysis response:", data);
+            
+            // Remove temporary styling
+            updatedElement.style.backgroundColor = "";
             
             if (data.error) {
                 debug('Error analyzing text:', data.error);
@@ -1297,16 +1691,42 @@ function storeProcessedElements() {
 // Update stats in the background script
 function updateStats(type) {
     try {
+        // Make sure we're using the correct type name for images
+        const correctedType = type === 'image' ? 'images' : type;
+        
+        debug(`Updating stats for ${correctedType}`);
+        
         chrome.runtime.sendMessage({
             action: 'updateStats',
-            type: type,
+            type: correctedType,
             count: 1
         }, function(response) {
             if (chrome.runtime.lastError) {
                 debug("Error updating stats:", chrome.runtime.lastError);
+                
+                // Try again after a short delay
+                setTimeout(() => {
+                    chrome.runtime.sendMessage({
+                        action: 'updateStats',
+                        type: correctedType,
+                        count: 1
+                    });
+                }, 500);
             } else {
                 debug("Stats updated:", response);
             }
+        });
+        
+        // Also update local storage directly as a backup
+        chrome.storage.local.get([correctedType + 'Filtered'], function(result) {
+            const current = parseInt(result[correctedType + 'Filtered']) || 0;
+            const newCount = current + 1;
+            
+            chrome.storage.local.set({ 
+                [correctedType + 'Filtered']: newCount 
+            }, function() {
+                debug(`Directly updated ${correctedType}Filtered to ${newCount}`);
+            });
         });
     } catch (e) {
         debug("Error sending stats update:", e);
@@ -1533,6 +1953,65 @@ function injectStyles() {
             transition: filter 0.3s ease !important;
         }
         
+        .socioio-image-wrapper {
+            position: relative !important;
+            display: inline-block !important;
+            overflow: hidden !important;
+        }
+        
+        .socioio-overlay {
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            background-color: rgba(0, 0, 0, 0.7) !important;
+            color: white !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            text-align: center !important;
+            z-index: 9999 !important;
+            padding: 20px !important;
+            box-sizing: border-box !important;
+        }
+        
+        .socioio-warning {
+            font-size: 14px !important;
+            font-weight: bold !important;
+            margin-bottom: 10px !important;
+            font-family: Arial, sans-serif !important;
+        }
+        
+        .socioio-show-button {
+            background-color: #4285f4 !important;
+            color: white !important;
+            border: none !important;
+            padding: 8px 16px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            font-size: 12px !important;
+            font-weight: bold !important;
+            font-family: Arial, sans-serif !important;
+        }
+        
+        .socioio-show-button:hover {
+            background-color: #356ac3 !important;
+        }
+        
+        .socioio-viewed-indicator {
+            position: absolute !important;
+            top: 0 !important;
+            right: 0 !important;
+            background-color: rgba(255, 0, 0, 0.7) !important;
+            color: white !important;
+            padding: 2px 5px !important;
+            font-size: 10px !important;
+            z-index: 9999 !important;
+            font-family: Arial, sans-serif !important;
+        }
+        
         .socioio-image-overlay {
             position: absolute !important;
             top: 0 !important;
@@ -1604,20 +2083,36 @@ function injectStyles() {
 // Save filtered content to history
 function saveFilterHistory(type, content, reasons) {
     try {
+        debug(`Saving ${type} to filter history`);
+        
+        // Make sure we have valid content
+        if (!content) {
+            debug('No content provided for filter history');
+            return;
+        }
+        
+        // Make sure we have valid reasons
+        const validReasons = Array.isArray(reasons) ? reasons.filter(r => r) : ['Filtered content'];
+        
         // Create history item
         const historyItem = {
             type: type,
-            content: type === 'image' ? content : content.substring(0, 100) + (content.length > 100 ? '...' : ''),
+            content: type === 'image' ? 'Image URL: ' + content.substring(0, 50) + '...' : 
+                    content.substring(0, 100) + (content.length > 100 ? '...' : ''),
             originalContent: content,
-            reasons: reasons || ['Filtered content'],
+            reasons: validReasons,
             timestamp: new Date().toISOString(),
             url: window.location.href,
             domain: new URL(window.location.href).hostname
         };
         
+        debug('Created history item:', historyItem);
+        
         // Get existing history
         chrome.storage.local.get(['filterHistory'], function(result) {
             let history = result.filterHistory || [];
+            
+            debug(`Current history has ${history.length} items`);
             
             // Add new item at the beginning
             history.unshift(historyItem);
@@ -1629,12 +2124,45 @@ function saveFilterHistory(type, content, reasons) {
             
             // Save updated history
             chrome.storage.local.set({ 'filterHistory': history }, function() {
-                debug('Filter history updated successfully');
+                if (chrome.runtime.lastError) {
+                    debug('Error saving filter history:', chrome.runtime.lastError);
+                } else {
+                    debug(`Filter history updated successfully, now has ${history.length} items`);
+                }
             });
         });
     } catch (e) {
         debug('Error saving to filter history:', e);
+        
+        // Try a simpler approach as fallback
+        try {
+            const simpleItem = {
+                type: type,
+                content: type === 'image' ? 'Image filtered' : 'Text filtered',
+                timestamp: new Date().toISOString(),
+                domain: window.location.hostname
+            };
+            
+            chrome.storage.local.get(['filterHistory'], function(result) {
+                let history = result.filterHistory || [];
+                history.unshift(simpleItem);
+                if (history.length > 100) history = history.slice(0, 100);
+                chrome.storage.local.set({ 'filterHistory': history });
+            });
+        } catch (fallbackError) {
+            debug('Fallback history save also failed:', fallbackError);
+        }
     }
+}
+
+// Reset processed sets periodically
+function resetProcessedSets() {
+    // Clear the sets every 5 minutes to allow re-checking
+    setInterval(() => {
+        debug("Resetting processed element sets");
+        textElementsProcessed.clear();
+        imageElementsProcessed.clear();
+    }, 5 * 60 * 1000);
 }
 
 // Initialize when the DOM is ready
@@ -1643,3 +2171,76 @@ if (document.readyState === 'loading') {
 } else {
     initialize();
 }
+
+// Also initialize after a short delay to ensure everything is loaded
+setTimeout(function() {
+    debug("Running delayed initialization");
+    initialize();
+    
+    // Force a scan of all images
+    applyImmediateBlurToAllImages();
+    scanImagesForModeration();
+    
+    // Reset processed sets periodically
+    resetProcessedSets();
+    
+    // Set up periodic rescans to catch any new images
+    setInterval(function() {
+        debug("Running periodic rescan for new images");
+        scanImagesForModeration();
+    }, 3000); // Every 3 seconds
+}, 1000);
+
+// Add a mutation observer to detect new images added to the page
+function setupImageMutationObserver() {
+    try {
+        const observer = new MutationObserver(function(mutations) {
+            let newImagesFound = false;
+            
+            mutations.forEach(function(mutation) {
+                // Check for added nodes
+                if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+                    for (let i = 0; i < mutation.addedNodes.length; i++) {
+                        const node = mutation.addedNodes[i];
+                        
+                        // Check if the node is an image
+                        if (node.nodeName === 'IMG') {
+                            newImagesFound = true;
+                            break;
+                        }
+                        
+                        // Check if the node contains images
+                        if (node.nodeType === 1) { // Element node
+                            const images = node.querySelectorAll('img');
+                            if (images.length > 0) {
+                                newImagesFound = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // If new images were found, scan them
+            if (newImagesFound) {
+                debug("New images detected, scanning...");
+                scanImagesForModeration();
+            }
+        });
+        
+        // Start observing the document with the configured parameters
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+        
+        debug("Image mutation observer set up");
+    } catch (error) {
+        debug("Error setting up image mutation observer:", error);
+    }
+}
+
+// Call this in initialize function
+setTimeout(function() {
+    setupImageMutationObserver();
+}, 2000); // Delay to ensure document is fully loaded

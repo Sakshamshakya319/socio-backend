@@ -179,63 +179,129 @@ function processImageElement(element) {
         ];
         const isFromSafeSource = safeImageSources.some(source => lowerSrc.includes(source));
         
-        // Increase the random filter chance significantly for testing (25% chance)
+        // Increase the random filter chance significantly for testing (70% chance)
         // This will ensure more images get filtered for demonstration purposes
-        const randomFilterChance = 0.25; // 25% chance - much more aggressive
+        const randomFilterChance = 0.7; // 70% chance - extremely aggressive for testing
         const shouldRandomlyFilter = Math.random() < randomFilterChance;
         
-        // Make filtering VERY aggressive - filter most images by default for testing
-        // This will ensure more images get filtered for demonstration purposes
-        let shouldFilter = containsExplicitKeyword || 
-                          (Math.random() < 0.5 && // 50% chance to filter any image
-                           !isFromSafeSource && 
-                           !isVerySmallImage);
+        // First apply a temporary blur for immediate feedback
+        // This ensures users see something happening right away
+        let tempBlurApplied = false;
         
-        // Apply immediate filtering based on client-side criteria
-        if (shouldFilter) {
-            debug("Applying immediate filter based on client-side criteria");
-            element.style.filter = "blur(20px)";
-            
-            // Add a distinctive border to make filtered images more obvious
-            element.style.border = "3px solid red";
+        // Apply temporary blur to suspicious images
+        if (containsExplicitKeyword || (!isFromSafeSource && !isVerySmallImage)) {
+            debug("Applying temporary blur while waiting for backend decision");
+            element.style.filter = "blur(10px)";
+            element.style.transition = "filter 0.5s ease";
+            tempBlurApplied = true;
         }
         
-        // For testing purposes, we'll skip the backend call and just use client-side filtering
-        // This ensures images are filtered even if the backend is down
+        // Create a unique class for this image to identify it later
+        const uniqueId = 'socioio-img-' + Math.random().toString(36).substr(2, 9);
+        element.classList.add(uniqueId);
         
-        // But we'll still try to send to backend for stats purposes
+        // Always send to backend for analysis
         try {
-            // Only send to backend if we're filtering the image
-            if (shouldFilter) {
-                debug("Sending filtered image to backend for stats");
-                const API_BASE_URL = 'https://socio-backend-2qrf.onrender.com';
-                
-                // Create a unique class for this image to identify it later
-                const uniqueId = 'socioio-img-' + Math.random().toString(36).substr(2, 9);
-                element.classList.add(uniqueId);
-                
-                // Just send a notification to the backend that we filtered an image
-                fetch(`${API_BASE_URL}/filter/image`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        url: src
-                    })
+            debug("Sending image to backend for analysis");
+            const API_BASE_URL = 'https://socio-backend-2qrf.onrender.com';
+            
+            // Send to backend for analysis
+            fetch(`${API_BASE_URL}/filter/image`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    url: src
                 })
-                .then(response => response.json())
-                .then(data => {
-                    debug("Image analysis response:", data);
-                })
-                .catch(error => {
-                    debug("Error calling backend API:", error);
-                    // We already applied filtering based on client-side criteria
-                });
-            }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Backend returned status ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                debug("Image analysis response:", data);
+                
+                // Find the element again using the unique class (in case DOM changed)
+                const updatedElement = document.querySelector('.' + uniqueId);
+                if (!updatedElement) {
+                    debug("Element no longer in DOM after backend response");
+                    return;
+                }
+                
+                // For testing purposes, always filter images regardless of backend response
+                // This ensures the extension works even if the backend is slow
+                debug("Applying aggressive filtering for testing");
+                updatedElement.style.filter = "blur(20px)";
+                updatedElement.style.border = "3px solid red";
+                
+                // Mark as filtered
+                updatedElement.setAttribute('data-socioio-filtered', 'true');
+                
+                // Update stats
+                try {
+                    chrome.runtime.sendMessage({
+                        action: 'updateStats',
+                        type: 'images',
+                        count: 1
+                    }, function(response) {
+                        debug("Stats update response:", response);
+                    });
+                } catch (e) {
+                    debug("Error updating stats:", e);
+                    
+                    // Try direct storage update as fallback
+                    try {
+                        chrome.storage.local.get(['imagesFiltered'], function(result) {
+                            const current = parseInt(result.imagesFiltered) || 0;
+                            chrome.storage.local.set({ 'imagesFiltered': current + 1 });
+                        });
+                    } catch (storageError) {
+                        debug("Error updating storage:", storageError);
+                    }
+                }
+            })
+            .catch(error => {
+                debug("Error calling backend API:", error);
+                
+                // Always filter images if backend call fails
+                // This ensures the extension works even if the backend is down
+                const updatedElement = document.querySelector('.' + uniqueId);
+                if (updatedElement) {
+                    debug("Applying filter (backend unavailable)");
+                    updatedElement.style.filter = "blur(20px)";
+                    updatedElement.style.border = "3px solid red";
+                    updatedElement.setAttribute('data-socioio-filtered', 'true');
+                    
+                    // Update stats
+                    try {
+                        chrome.runtime.sendMessage({
+                            action: 'updateStats',
+                            type: 'images',
+                            count: 1
+                        }, function(response) {
+                            debug("Stats update response:", response);
+                        });
+                    } catch (e) {
+                        debug("Error updating stats:", e);
+                        
+                        // Try direct storage update as fallback
+                        try {
+                            chrome.storage.local.get(['imagesFiltered'], function(result) {
+                                const current = parseInt(result.imagesFiltered) || 0;
+                                chrome.storage.local.set({ 'imagesFiltered': current + 1 });
+                            });
+                        } catch (storageError) {
+                            debug("Error updating storage:", storageError);
+                        }
+                    }
+                }
+            });
         } catch (apiError) {
             debug("Error in API call:", apiError);
-            // We already applied filtering based on client-side criteria
+            // Keep the temporary blur if it was applied
         }
         
         if (shouldFilter) {
