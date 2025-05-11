@@ -1,0 +1,27 @@
+{
+  "timestamp": "20250510_003937",
+  "original": "{\n  \"message\": \"pong\",\n  \"status\": \"ok\"\n}",
+  "processed": "{\n  \"message\": \"pong\",\n  \"status\": \"ok\"\n}",
+  "detection_results": {
+    "hate_speech": false,
+    "profanity": false,
+    "flagged_words": [],
+    "flagged_sentences": [],
+    "sensitive_info": {
+      "emails": [],
+      "pan": [],
+      "ifsc_codes": [],
+      "swift_codes": [],
+      "passport_numbers": [],
+      "credit_cards": [],
+      "ssn": [],
+      "gps_coordinates": [],
+      "phone_numbers": [],
+      "nhs_numbers": [],
+      "aadhaar": [],
+      "account_numbers": []
+    }
+  },
+  "encryption_log": {},
+  "action": "keep"
+}

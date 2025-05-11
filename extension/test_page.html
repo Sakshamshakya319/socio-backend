@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Socio.io Extension Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #4285f4;
+            border-bottom: 2px solid #4285f4;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #4285f4;
+            margin-top: 20px;
+        }
+        .test-section {
+            background-color: #fff;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid #4285f4;
+            border-radius: 0 5px 5px 0;
+        }
+        .test-image {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 10px 0;
+        }
+        .button {
+            display: inline-block;
+            background-color: #4285f4;
+            color: white;
+            padding: 10px 15px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+        .button:hover {
+            background-color: #3367d6;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+        }
+        .status-good {
+            background-color: #e6f4ea;
+            color: #137333;
+        }
+        .status-bad {
+            background-color: #fce8e6;
+            color: #c5221f;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Socio.io Extension Test Page</h1>
+        
+        <p>This page helps you test if the Socio.io content moderation extension is working properly.</p>
+        
+        <div class="status" id="extensionStatus">
+            Checking extension status...
+        </div>
+        
+        <div class="status" id="backendStatus">
+            Checking backend status...
+        </div>
+        
+        <h2>Test Content</h2>
+        
+        <div class="test-section">
+            <h3>Text Content</h3>
+            <p>This is a sample paragraph that should be processed by the extension. If the extension is working, this text might be analyzed for inappropriate content.</p>
+            <p>Here's another paragraph with some potentially problematic words like "hate", "violence", and "discrimination" that might trigger the content filter.</p>
+        </div>
+        
+        <div class="test-section">
+            <h3>Image Content</h3>
+            <p>Below are some sample images that should be processed by the extension:</p>
+            
+            <img src="https://picsum.photos/400/300" alt="Random Image 1" class="test-image">
+            <img src="https://picsum.photos/400/301" alt="Random Image 2" class="test-image">
+        </div>
+        
+        <div class="test-section">
+            <h3>Manual Tests</h3>
+            <button id="checkStatusBtn" class="button">Check Extension Status</button>
+            <button id="refreshPageBtn" class="button">Refresh Page</button>
+            <button id="openPopupBtn" class="button">Open Extension Popup</button>
+        </div>
+    </div>
+    
+    <script>
+        // Function to check if the extension is working
+        function checkExtensionStatus() {
+            const statusElement = document.getElementById('extensionStatus');
+            
+            try {
+                // Try to send a message to the extension
+                chrome.runtime.sendMessage({action: 'checkStatus'}, function(response) {
+                    if (chrome.runtime.lastError) {
+                        statusElement.textContent = 'Extension Status: NOT WORKING - ' + chrome.runtime.lastError.message;
+                        statusElement.className = 'status status-bad';
+                        return;
+                    }
+                    
+                    if (response) {
+                        statusElement.textContent = 'Extension Status: WORKING - ' + response.status;
+                        statusElement.className = 'status status-good';
+                    } else {
+                        statusElement.textContent = 'Extension Status: NOT WORKING - No response received';
+                        statusElement.className = 'status status-bad';
+                    }
+                });
+            } catch (e) {
+                statusElement.textContent = 'Extension Status: NOT WORKING - ' + e.message;
+                statusElement.className = 'status status-bad';
+            }
+        }
+        
+        // Function to check backend status
+        function checkBackendStatus() {
+            const statusElement = document.getElementById('backendStatus');
+            
+            fetch('http://127.0.0.1:5000/ping')
+                .then(response => response.json())
+                .then(data => {
+                    statusElement.textContent = 'Backend Status: RUNNING - ' + data.message;
+                    statusElement.className = 'status status-good';
+                })
+                .catch(error => {
+                    statusElement.textContent = 'Backend Status: NOT RUNNING - Please start the backend';
+                    statusElement.className = 'status status-bad';
+                });
+        }
+        
+        // Run checks when page loads
+        window.addEventListener('load', function() {
+            setTimeout(checkExtensionStatus, 1000); // Delay to ensure extension is ready
+            checkBackendStatus();
+            
+            // Set up button handlers
+            document.getElementById('checkStatusBtn').addEventListener('click', function() {
+                checkExtensionStatus();
+                checkBackendStatus();
+            });
+            
+            document.getElementById('refreshPageBtn').addEventListener('click', function() {
+                window.location.reload();
+            });
+            
+            document.getElementById('openPopupBtn').addEventListener('click', function() {
+                alert('To open the extension popup, click on the Socio.io icon in your browser toolbar.');
+            });
+        });
+    </script>
+</body>
+</html>

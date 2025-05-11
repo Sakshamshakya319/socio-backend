@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Socio.io Setup</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #4285f4;
+            border-bottom: 2px solid #4285f4;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #4285f4;
+            margin-top: 20px;
+        }
+        .step {
+            background-color: #f9f9f9;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid #4285f4;
+            border-radius: 0 5px 5px 0;
+        }
+        .step h3 {
+            margin-top: 0;
+            color: #4285f4;
+        }
+        code {
+            background-color: #f0f0f0;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: Consolas, monospace;
+            display: block;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .note {
+            background-color: #fffde7;
+            padding: 10px;
+            border-left: 4px solid #ffd600;
+            margin: 15px 0;
+        }
+        .button {
+            display: inline-block;
+            background-color: #4285f4;
+            color: white;
+            padding: 10px 15px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-top: 10px;
+            border: none;
+            cursor: pointer;
+        }
+        .button:hover {
+            background-color: #3367d6;
+        }
+        .status-success {
+            color: #0f9d58;
+            font-weight: bold;
+        }
+        .status-warning {
+            color: #f4b400;
+            font-weight: bold;
+        }
+        .status-error {
+            color: #db4437;
+            font-weight: bold;
+        }
+        .hidden {
+            display: none;
+        }
+        .download-link {
+            display: inline-block;
+            margin: 5px 0;
+            color: #4285f4;
+            text-decoration: none;
+        }
+        .download-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Socio.io Extension Setup</h1>
+        
+        <div id="setupIntro">
+            <p>Welcome to Socio.io Content Moderation Extension. This setup will help you install and configure the backend server required for the extension to work.</p>
+            
+            <div class="note">
+                <strong>Note:</strong> The extension requires a Python backend server to perform content moderation. This setup will guide you through the process of installing and configuring the backend.
+            </div>
+            
+            <p>Click the button below to start the setup process:</p>
+            
+            <button id="startSetupBtn" class="button">Start Setup</button>
+        </div>
+        
+        <div id="setupProcess" style="display: none;">
+            <h2>Setup Process</h2>
+            
+            <div id="setupStatus" class="step">
+                Setting up Socio.io...
+            </div>
+            
+            <div class="step">
+                <h3>Step 1: Check Python Installation</h3>
+                <p>Checking if Python is installed on your system...</p>
+                <div id="pythonStatus">
+                    Python is required for the backend server. If you don't have Python installed, please download and install it:
+                </div>
+            </div>
+            
+            <div class="step">
+                <h3>Step 2: Extract Backend Files</h3>
+                <p id="extractionStatus">Waiting to extract backend files...</p>
+                <p>Backend files will be saved to: <span id="backendLocation">Unknown</span></p>
+                <div id="downloadLinks"></div>
+            </div>
+            
+            <div class="step">
+                <h3>Step 3: Install Python Packages</h3>
+                <p id="packagesStatus">Waiting to install Python packages...</p>
+                <div id="packagesInstructions"></div>
+            </div>
+            
+            <div class="step">
+                <h3>Step 4: Create Startup Script</h3>
+                <p id="startupStatus">Waiting to create startup script...</p>
+                <div id="startupScript"></div>
+            </div>
+            
+            <div class="step">
+                <h3>Step 5: Start Backend Server</h3>
+                <p id="serverStatus">Waiting to start backend server...</p>
+                <div id="serverInstructions"></div>
+            </div>
+            
+            <div id="completion" style="display: none;">
+                <h2>Setup Complete</h2>
+                
+                <div class="note">
+                    <strong>Important:</strong> You need to start the backend server each time you want to use the extension. Use the startup script created during setup.
+                </div>
+                
+                <p>To verify that the backend server is running, click the button below:</p>
+                
+                <button id="checkBackendBtn" class="button">Check Backend Status</button>
+                
+                <p>Once the backend is running, you can start using the extension to moderate content on websites.</p>
+                
+                <a href="popup.html" class="button">Go to Extension</a>
+            </div>
+        </div>
+    </div>
+    
+    <script src="setup.js"></script>
+</body>
+</html>
