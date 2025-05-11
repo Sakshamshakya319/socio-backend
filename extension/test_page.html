@@ -142,7 +142,7 @@
         function checkBackendStatus() {
             const statusElement = document.getElementById('backendStatus');
             
-            fetch('https://socio-backend-ipzg.onrender.com/ping')
+            fetch('https://socio-backend-2qrf.onrender.com/ping')
                 .then(response => response.json())
                 .then(data => {
                     statusElement.textContent = 'Backend Status: RUNNING - ' + data.message;

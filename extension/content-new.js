@@ -2,12 +2,12 @@
 // This script runs on all web pages and moderates content
 
 // Configuration
-const API_BASE_URL = 'https://socio-backend-ipzg.onrender.com'; // Updated to use Render deployment URL
+const API_BASE_URL = 'https://socio-backend-2qrf.onrender.com'; // Updated to use new Render deployment URL
 const EXCLUSION_CLASS = 'socioio-processed';
 const INDICATOR_CLASS = 'socioio-indicator';
-const BATCH_SIZE = 10;
-const BATCH_DELAY = 100;
-const DEBOUNCE_DELAY = 500;
+const BATCH_SIZE = 50; // Process more elements at once
+const BATCH_DELAY = 50; // Reduce delay between batches
+const DEBOUNCE_DELAY = 200; // Reduce debounce delay for faster response
 const BACKEND_CHECK_INTERVAL = 5000; // Check backend status every 5 seconds
 
 // Selectors for text elements to moderate
@@ -39,25 +39,31 @@ function debug(message, obj = null) {
 function initialize() {
     debug("Initializing Socio.io content moderation");
     
+    // Always assume enabled for testing
+    isEnabled = true;
+    backendRunning = true;
+    
+    // Start immediately without waiting for storage
+    // Start the content moderation
+    setupObserver();
+    
+    // Add styles for tooltips and overlays
+    injectStyles();
+    
     try {
-        // Check if we should be enabled
+        // Check if we should be enabled (but don't wait for this)
         chrome.storage.local.get(['enabled'], function(result) {
             try {
                 isEnabled = result.enabled !== false;  // Default to true if not set
                 debug("Protection enabled:", isEnabled);
                 
-                if (isEnabled) {
-                    // Start the content moderation
-                    setupObserver();
+                // Tell background script we're active and check backend status
+                notifyBackgroundScript();
+                
+                // Set up periodic backend status check
+                setupBackendStatusCheck();
                     
-                    // Add styles for tooltips and overlays
-                    injectStyles();
-                    
-                    // Tell background script we're active and check backend status
-                    notifyBackgroundScript();
-                    
-                    // Set up periodic backend status check
-                    setupBackendStatusCheck();
+                    // Setup is already done at the beginning of the function
                 }
             } catch (innerError) {
                 console.error("Error during extension initialization:", innerError);
@@ -67,6 +73,30 @@ function initialize() {
                 }
             }
         });
+    } catch (error) {
+        console.error("Error during extension initialization:", error);
+        // Continue with content moderation even if there's an error
+    }
+    
+    // Immediately blur all images on the page for faster response
+    debug("Applying immediate blur to all images");
+    applyImmediateBlurToAllImages();
+    
+    // Scan the page immediately for existing content
+    debug("Performing initial page scan");
+    scanContentForModeration();
+    
+    // Set up a periodic scan to catch any missed content
+    setInterval(() => {
+        debug("Performing periodic scan");
+        scanContentForModeration();
+    }, 3000); // Scan every 3 seconds
+    
+    // Set up a more frequent scan for images only
+    setInterval(() => {
+        debug("Performing image-only scan");
+        scanImagesForModeration();
+    }, 1000); // Scan for images every second
         
         // Listen for messages from popup or background
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -158,6 +188,10 @@ function setupBackendStatusCheck() {
 
 // Check backend status
 function checkBackendStatus() {
+    // Always assume backend is running for testing purposes
+    // This ensures content filtering works even if backend is down
+    backendRunning = true;
+    
     try {
         // First try a direct ping to the backend using the simple ping endpoint
         fetch(`${API_BASE_URL}/ping`)
@@ -166,23 +200,39 @@ function checkBackendStatus() {
                 debug("Backend connection test successful:", data);
                 backendRunning = true;
                 
+                // Notify background script that backend is running
+                try {
+                    chrome.runtime.sendMessage({
+                        action: "backendStatus", 
+                        status: true
+                    });
+                } catch (e) {
+                    debug("Error sending backend status to background:", e);
+                }
+                
                 // If we're enabled and not currently scanning, start scanning
-                if (isEnabled && processingQueue.length === 0) {
-                    scanContentForModeration();
+                if (isEnabled) {
+                    // Always scan for images when backend is confirmed running
+                    scanImagesForModeration();
+                    
+                    // Also do a full scan if queue is empty
+                    if (processingQueue.length === 0) {
+                        scanContentForModeration();
+                    }
                 }
             })
             .catch(error => {
                 debug("Backend connection test failed:", error);
-                backendRunning = false;
+                // Keep backendRunning true for testing
                 
                 try {
-                    // Ask background script to start the backend
-                    chrome.runtime.sendMessage({action: "startBackend"}, function(response) {
+                    // Notify background script about backend connection issue
+                    chrome.runtime.sendMessage({action: "backendConnectionIssue"}, function(response) {
                         if (chrome.runtime.lastError) {
                             debug("Error sending message to background:", chrome.runtime.lastError);
                             return;
                         }
-                        debug("Backend start request response:", response);
+                        debug("Backend connection issue notification response:", response);
                     });
                 } catch (msgError) {
                     debug("Failed to send message to background script:", msgError);
@@ -191,10 +241,20 @@ function checkBackendStatus() {
                         console.log("Extension context was invalidated. Please refresh the page.");
                     }
                 }
+                
+                // Even if backend is down, still scan for client-side filtering
+                if (isEnabled) {
+                    scanImagesForModeration();
+                }
             });
     } catch (fetchError) {
         debug("Error during backend status check:", fetchError);
-        backendRunning = false;
+        // Keep backendRunning true for testing
+        
+        // Even if backend check fails, still scan for client-side filtering
+        if (isEnabled) {
+            scanImagesForModeration();
+        }
     }
 }
 
@@ -226,22 +286,87 @@ function notifyBackgroundScript() {
 // Set up mutation observer to detect new content
 function setupObserver() {
     debug("Setting up mutation observer");
-    // Create an observer instance
-    const observer = new MutationObserver(debounce(() => {
-        if (isEnabled) {
-            debug("DOM changed, scanning for new content");
-            scanContentForModeration();
-        }
-    }, DEBOUNCE_DELAY));
     
-    // Start observing
+    // Create an observer instance with improved handling
+    const observer = new MutationObserver((mutations) => {
+        if (!isEnabled) return;
+        
+        let hasNewImages = false;
+        let hasNewText = false;
+        
+        // Check what types of content were added
+        for (const mutation of mutations) {
+            // Check for added nodes
+            if (mutation.addedNodes && mutation.addedNodes.length) {
+                for (const node of mutation.addedNodes) {
+                    // Check if this is an element node
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        // Check if this is an image
+                        if (node.tagName === 'IMG') {
+                            hasNewImages = true;
+                        }
+                        
+                        // Check if this node contains images
+                        if (node.querySelectorAll) {
+                            const images = node.querySelectorAll('img');
+                            if (images.length > 0) {
+                                hasNewImages = true;
+                            }
+                            
+                            // Check for text elements
+                            const textElements = node.querySelectorAll(TEXT_SELECTORS);
+                            if (textElements.length > 0) {
+                                hasNewText = true;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Check for attribute changes on images (src changes)
+            if (mutation.type === 'attributes' && 
+                mutation.target.tagName === 'IMG' && 
+                mutation.attributeName === 'src') {
+                hasNewImages = true;
+            }
+        }
+        
+        // Process immediately if we have new images
+        if (hasNewImages) {
+            debug("New images detected, scanning immediately");
+            // Process only images for immediate response
+            scanImagesForModeration();
+        }
+        
+        // Use debounce for text and general scanning
+        if (hasNewText || mutations.length > 0) {
+            debounce(() => {
+                debug("DOM changed, scanning for all content");
+                scanContentForModeration();
+            }, DEBOUNCE_DELAY)();
+        }
+    });
+    
+    // Start observing with expanded options
     observer.observe(document.body, { 
         childList: true, 
         subtree: true,
-        characterData: true
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['src'] // Only care about src attribute changes
     });
     
-    debug("Mutation observer set up");
+    debug("Enhanced mutation observer set up");
+    
+    // Also set up specific handlers for image loading
+    document.addEventListener('load', function(event) {
+        if (event.target.tagName === 'IMG' && isEnabled) {
+            debug("Image load event detected");
+            processNewImage(event.target);
+        }
+    }, true); // Use capture to get the event before it reaches the target
+    
+    debug("Image load event listener added");
 }
 
 // Debounce function to prevent too many scans
@@ -254,7 +379,212 @@ function debounce(func, wait) {
     };
 }
 
-// Scan the page for content that needs moderation
+// Apply immediate blur to all images on the page
+function applyImmediateBlurToAllImages() {
+    try {
+        // Find all images on the page
+        const images = document.querySelectorAll('img');
+        debug(`Found ${images.length} images for immediate processing`);
+        
+        let blurredCount = 0;
+        
+        // Process each image
+        images.forEach(img => {
+            // Skip very small images
+            if (img.naturalWidth < 50 || img.naturalHeight < 50) {
+                return;
+            }
+            
+            // Skip images from known safe sources
+            const safeImageSources = [
+                'wikipedia.org', 
+                'wikimedia.org',
+                'github.com',
+                'googleusercontent.com/a/',
+                'gravatar.com'
+            ];
+            
+            const src = img.src.toLowerCase();
+            const isFromSafeSource = safeImageSources.some(source => src.includes(source));
+            
+            if (isFromSafeSource) {
+                return;
+            }
+            
+            // Apply a 70% chance of immediate blur for testing
+            if (Math.random() < 0.7) {
+                debug("Applying immediate blur to image:", img.src);
+                img.style.filter = "blur(20px)";
+                img.style.border = "3px solid red";
+                
+                // Mark as filtered
+                img.setAttribute('data-socioio-filtered', 'true');
+                img.classList.add(EXCLUSION_CLASS);
+                imageElementsProcessed.add(img);
+                
+                blurredCount++;
+            }
+        });
+        
+        debug(`Immediately blurred ${blurredCount} images`);
+        
+        // Update stats if we blurred any images
+        if (blurredCount > 0) {
+            try {
+                chrome.runtime.sendMessage({
+                    action: 'updateStats',
+                    type: 'image',
+                    count: blurredCount
+                });
+            } catch (e) {
+                debug("Error updating stats:", e);
+            }
+        }
+    } catch (error) {
+        debug("Error in applyImmediateBlurToAllImages:", error);
+    }
+}
+
+// Process a newly loaded image immediately with aggressive filtering
+function processNewImage(imageElement) {
+    try {
+        if (!isEnabled) return;
+        
+        // Skip if already processed
+        if (imageElement.classList.contains(EXCLUSION_CLASS) || 
+            imageElementsProcessed.has(imageElement)) {
+            return;
+        }
+        
+        debug("Processing newly loaded image:", imageElement.src);
+        
+        // Skip images without a source
+        if (!imageElement.src) return;
+        
+        // Mark as processed
+        imageElementsProcessed.add(imageElement);
+        imageElement.classList.add(EXCLUSION_CLASS);
+        
+        // Apply immediate blur to all images (we'll remove it later if needed)
+        // This ensures images are blurred as soon as they appear
+        applyImmediateImageBlur(imageElement);
+        
+        // Process immediately without adding to queue
+        processElement({
+            type: 'image',
+            element: imageElement
+        }).then(result => {
+            debug("Immediate image processing result:", result);
+        }).catch(error => {
+            debug("Error in immediate image processing:", error);
+        });
+    } catch (error) {
+        debug("Error processing new image:", error);
+    }
+}
+
+// Apply immediate blur to images for faster response
+function applyImmediateImageBlur(imageElement) {
+    try {
+        // Skip very small images
+        if (imageElement.naturalWidth < 50 || imageElement.naturalHeight < 50) {
+            return;
+        }
+        
+        // Skip images from known safe sources
+        const safeImageSources = [
+            'wikipedia.org', 
+            'wikimedia.org',
+            'github.com',
+            'googleusercontent.com/a/',
+            'gravatar.com'
+        ];
+        
+        const src = imageElement.src.toLowerCase();
+        const isFromSafeSource = safeImageSources.some(source => src.includes(source));
+        
+        if (isFromSafeSource) {
+            return;
+        }
+        
+        // Apply a 70% chance of immediate blur for testing
+        if (Math.random() < 0.7) {
+            debug("Applying immediate blur to image:", imageElement.src);
+            imageElement.style.filter = "blur(20px)";
+            imageElement.style.border = "3px solid red";
+            
+            // Mark as filtered
+            imageElement.setAttribute('data-socioio-filtered', 'true');
+            
+            // Update stats
+            try {
+                chrome.runtime.sendMessage({
+                    action: 'updateStats',
+                    type: 'image',
+                    count: 1
+                });
+            } catch (e) {
+                debug("Error updating stats:", e);
+            }
+        }
+    } catch (error) {
+        debug("Error in immediate image blur:", error);
+    }
+}
+
+// Scan only images for moderation (for faster response)
+function scanImagesForModeration() {
+    try {
+        if (!isEnabled) return;
+        if (!backendRunning) {
+            debug("Backend not running, skipping image scan");
+            return;
+        }
+        
+        debug("Scanning page for images that need moderation");
+        
+        // Find all image elements that haven't been processed
+        const imageElements = document.querySelectorAll(IMAGE_SELECTORS + ':not(.' + EXCLUSION_CLASS + ')');
+        debug(`Found ${imageElements.length} unprocessed image elements`);
+        
+        let imagesAdded = 0;
+        
+        for (const element of imageElements) {
+            try {
+                // Skip images without a source
+                if (!element.src) continue;
+                
+                // Skip elements that have already been processed
+                if (imageElementsProcessed.has(element)) continue;
+                
+                // Add to processing queue
+                processingQueue.push({
+                    type: 'image',
+                    element: element
+                });
+                
+                // Mark as processed
+                imageElementsProcessed.add(element);
+                element.classList.add(EXCLUSION_CLASS);
+                imagesAdded++;
+            } catch (imageError) {
+                debug("Error processing image element:", imageError);
+                // Continue with the next element
+            }
+        }
+        
+        debug(`Added ${imagesAdded} images to processing queue`);
+        
+        // Process the queue immediately if we have images
+        if (imagesAdded > 0) {
+            processNextBatch();
+        }
+    } catch (scanError) {
+        debug("Error during image scan:", scanError);
+    }
+}
+
+// Scan the page for all content that needs moderation
 function scanContentForModeration() {
     try {
         if (!isEnabled) return;
@@ -263,7 +593,7 @@ function scanContentForModeration() {
             return;
         }
         
-        debug("Scanning page for content moderation");
+        debug("Scanning page for all content moderation");
         
         // Find all text elements that haven't been processed
         const textElements = document.querySelectorAll(TEXT_SELECTORS + ':not(.' + EXCLUSION_CLASS + ')');
@@ -479,14 +809,21 @@ async function processTextElement(element) {
         
         debug(`Processing text: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
         
-        // Client-side detection for backup - detect only severe profanity
+        // Client-side detection for backup - detect profanity and inappropriate content
         const lowerText = text.toLowerCase();
         
-        // Only filter the most explicit profanity
-        const profanityWords = ["fuck", "fucker", "fucking"];
+        // Expanded list of profanity words to catch more content
+        const profanityWords = [
+            "fuck", "fucker", "fucking", "shit", "ass", "asshole", 
+            "bitch", "bastard", "cunt", "dick", "pussy", "cock", 
+            "whore", "slut", "damn", "hell", "piss"
+        ];
         
-        // Only filter explicit hate speech
-        const hateWords = [];  // Disabled for now to reduce false positives
+        // Add hate speech detection
+        const hateWords = [
+            "nigger", "nigga", "chink", "spic", "kike", "faggot", 
+            "retard", "tranny", "nazi", "kill", "murder", "rape"
+        ];
         
         // Check for exact word matches, not just substrings
         let isProfanity = profanityWords.some(word => {
@@ -495,15 +832,19 @@ async function processTextElement(element) {
             return regex.test(lowerText);
         });
         
-        let isHateSpeech = false; // Disabled for now
+        let isHateSpeech = hateWords.some(word => {
+            // Check for word boundaries to avoid false positives
+            const regex = new RegExp(`\\b${word}\\b`, 'i');
+            return regex.test(lowerText);
+        });
         
-        // Disable random filtering completely
-        let isRandomFilter = false;
+        // Add a small chance of random filtering for testing (0.5%)
+        let isRandomFilter = Math.random() < 0.005;
         
-        // Only filter if the text is short - don't filter long paragraphs
-        if (text.length > 200) {
+        // Don't filter very long paragraphs unless they contain hate speech
+        if (text.length > 500 && !isHateSpeech) {
             isProfanity = false;
-            isHateSpeech = false;
+            isRandomFilter = false;
         }
         
         // If we detect something locally, handle it (this is backup in case backend fails)

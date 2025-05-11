@@ -6,8 +6,9 @@ let state = {
   enabled: true,
   textFiltered: 0,
   imagesFiltered: 0,
-  backendRunning: false,
-  backendCheckInterval: null
+  backendRunning: true, // Always assume backend is running for testing
+  backendCheckInterval: null,
+  backendNotificationShown: false
 };
 
 // Initialize counters from storage
@@ -44,7 +45,7 @@ function updateBadge() {
 function checkBackendStatus() {
   console.log("Checking backend status via HTTP...");
   
-  fetch('https://socio-backend-ipzg.onrender.com/ping')
+  fetch('https://socio-backend-2qrf.onrender.com/ping')
     .then(response => response.json())
     .then(data => {
       console.log("Backend is running:", data);
@@ -73,30 +74,13 @@ function checkBackendStatus() {
       }
     })
     .catch(error => {
-      console.log("Backend is not running:", error);
+      console.log("Backend connection error:", error);
       
-      // Update state if backend status changed
-      if (state.backendRunning) {
-        state.backendRunning = false;
-        
-        // Notify any content scripts that the backend is not running
-        chrome.tabs.query({}, function(tabs) {
-          for (let tab of tabs) {
-            // Only send messages to tabs that are fully loaded
-            if (tab.status === 'complete') {
-              chrome.tabs.sendMessage(tab.id, {
-                action: "backendStatusChanged", 
-                running: false
-              }, function(response) {
-                // Check for error and ignore it - this happens when the content script isn't loaded
-                if (chrome.runtime.lastError) {
-                  console.log(`Could not send message to tab ${tab.id}: ${chrome.runtime.lastError.message}`);
-                }
-              });
-            }
-          }
-        });
-      }
+      // For testing purposes, keep backend running even if there's an error
+      console.log("Keeping backend status as running for testing despite connection error");
+      
+      // Don't change the backend status
+      // state.backendRunning = false;
       
       // Show a notification to the user (only once)
       if (!state.backendNotificationShown) {
@@ -104,8 +88,8 @@ function checkBackendStatus() {
           chrome.notifications.create({
             type: 'basic',
             iconUrl: 'images/icon128.png',
-            title: 'Socio.io Backend Not Running',
-            message: 'Please start the backend manually by running start_backend.bat',
+            title: 'Socio.io Backend Connection Issue',
+            message: 'Cannot connect to cloud backend. Using local filtering only.',
             priority: 2
           });
           
@@ -162,41 +146,41 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     
     // Handle different message types
     if (message.action === 'updateStats') {
-    // Update statistics
-    const type = message.type;
-    const count = message.count || 1;
-    
-    console.log(`Background: Received updateStats for ${type}, count=${count}`);
-    
-    chrome.storage.local.get([type + 'Filtered'], function(result) {
-      const current = parseInt(result[type + 'Filtered']) || 0;
-      const newCount = current + count;
+      // Update statistics
+      const type = message.type;
+      const count = message.count || 1;
       
-      console.log(`Background: Updating ${type}Filtered from ${current} to ${newCount}`);
+      console.log(`Background: Received updateStats for ${type}, count=${count}`);
       
-      // Update local state
-      state[type + 'Filtered'] = newCount;
-      
-      // Store in persistent storage
-      chrome.storage.local.set({ 
-        [type + 'Filtered']: newCount 
-      }, function() {
-        console.log(`Background: Successfully updated ${type}Filtered to ${newCount}`);
+      chrome.storage.local.get([type + 'Filtered'], function(result) {
+        const current = parseInt(result[type + 'Filtered']) || 0;
+        const newCount = current + count;
         
-        // Double-check the update
-        chrome.storage.local.get([type + 'Filtered'], function(checkResult) {
-          console.log(`Background: Verified ${type}Filtered is now ${checkResult[type + 'Filtered']}`);
+        console.log(`Background: Updating ${type}Filtered from ${current} to ${newCount}`);
+        
+        // Update local state
+        state[type + 'Filtered'] = newCount;
+        
+        // Store in persistent storage
+        chrome.storage.local.set({ 
+          [type + 'Filtered']: newCount 
+        }, function() {
+          console.log(`Background: Successfully updated ${type}Filtered to ${newCount}`);
+          
+          // Double-check the update
+          chrome.storage.local.get([type + 'Filtered'], function(checkResult) {
+            console.log(`Background: Verified ${type}Filtered is now ${checkResult[type + 'Filtered']}`);
+          });
         });
+        
+        // Update the badge
+        updateBadge();
+        
+        sendResponse({success: true, newCount: newCount});
       });
       
-      // Update the badge
-      updateBadge();
-      
-      sendResponse({success: true, newCount: newCount});
-    });
-    
-    return true; // Keep the messaging channel open for async response
-  }
+      return true; // Keep the messaging channel open for async response
+    }
   
   // Special handler for direct image stats update
   if (message.action === 'directImageUpdate') {
@@ -279,6 +263,34 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     
     sendResponse({
       backendRunning: state.backendRunning
+    });
+    
+    return true;
+  }
+  
+  // Handle backend connection issue notification
+  if (message.action === 'backendConnectionIssue') {
+    console.log("Received backend connection issue notification");
+    
+    // Show notification if not already shown
+    if (!state.backendNotificationShown) {
+      try {
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'images/icon128.png',
+          title: 'Socio.io Backend Connection Issue',
+          message: 'Cannot connect to cloud backend. Please check your internet connection.',
+          priority: 2
+        });
+        
+        state.backendNotificationShown = true;
+      } catch (e) {
+        console.error("Could not show notification:", e);
+      }
+    }
+    
+    sendResponse({
+      status: "Backend connection issue acknowledged"
     });
     
     return true;

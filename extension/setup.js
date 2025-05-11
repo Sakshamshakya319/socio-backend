@@ -2,179 +2,56 @@
 console.log("Socio.io setup script loaded");
 
 // Configuration
-const BACKEND_FILES = [
-    { name: "app.py", path: "/backend/app.py" },
-    { name: "content_filter.py", path: "/backend/content_filter.py" },
-    { name: "requirements.txt", path: "/backend/requirements.txt" }
-];
+const BACKEND_URL = 'https://socio-backend-2qrf.onrender.com';
 
-// Check if Python is installed
-async function checkPythonInstalled() {
+// Check backend connection
+async function checkBackendConnection() {
     try {
-        // Create a download link for Python if not installed
-        const pythonLink = document.createElement('a');
-        pythonLink.href = 'https://www.python.org/downloads/';
-        pythonLink.textContent = 'Download Python';
-        pythonLink.target = '_blank';
-        pythonLink.className = 'button';
+        document.getElementById('connectionStatus').textContent = 'Checking connection to backend...';
         
-        document.getElementById('pythonStatus').appendChild(pythonLink);
-        return false;
-    } catch (error) {
-        console.error("Error checking Python:", error);
-        document.getElementById('pythonStatus').textContent = 'Error checking Python installation';
-        return false;
-    }
-}
-
-// Extract backend files
-async function extractBackendFiles() {
-    try {
-        document.getElementById('extractionStatus').textContent = 'Extracting backend files...';
+        // Try to connect to the backend
+        const response = await fetch(`${BACKEND_URL}/ping`);
+        const data = await response.json();
         
-        // Create a directory for the backend
-        const backendDir = await createBackendDirectory();
-        
-        // Extract each file
-        for (const file of BACKEND_FILES) {
-            await extractFile(file.name, file.path, backendDir);
+        if (data && data.status === 'ok') {
+            document.getElementById('connectionStatus').textContent = 'Connected to backend successfully!';
+            document.getElementById('connectionStatus').className = 'status-success';
+            return true;
+        } else {
+            document.getElementById('connectionStatus').textContent = 'Backend responded but with unexpected data';
+            document.getElementById('connectionStatus').className = 'status-warning';
+            return false;
         }
-        
-        document.getElementById('extractionStatus').textContent = 'Backend files extracted successfully';
-        return true;
     } catch (error) {
-        console.error("Error extracting files:", error);
-        document.getElementById('extractionStatus').textContent = 'Error extracting backend files: ' + error.message;
+        console.error("Error connecting to backend:", error);
+        document.getElementById('connectionStatus').textContent = 'Error connecting to backend: ' + error.message;
+        document.getElementById('connectionStatus').className = 'status-error';
         return false;
     }
 }
 
-// Create backend directory
-async function createBackendDirectory() {
+// Display backend information
+function displayBackendInfo() {
     try {
-        // In a browser extension, we can't directly create directories on the file system
-        // Instead, we'll guide the user to create it manually or use the downloads directory
-        
-        // Get the downloads directory
-        const downloadsDir = await getDownloadsDirectory();
-        
-        // Create a socio.io subdirectory in downloads
-        const backendDir = downloadsDir + '/socio.io_backend';
-        
-        document.getElementById('backendLocation').textContent = backendDir;
-        return backendDir;
-    } catch (error) {
-        console.error("Error creating backend directory:", error);
-        throw error;
-    }
-}
-
-// Get downloads directory
-async function getDownloadsDirectory() {
-    // This is a simplified version - in reality, we can't directly access the file system
-    // We'll use the downloads API to download files to the default downloads directory
-    return "Downloads";
-}
-
-// Extract a file from the extension to the backend directory
-async function extractFile(fileName, filePath, backendDir) {
-    try {
-        // Get the file content from the extension
-        const response = await fetch(chrome.runtime.getURL(filePath));
-        const fileContent = await response.text();
-        
-        // Create a download link for the file
-        const downloadLink = document.createElement('a');
-        downloadLink.href = URL.createObjectURL(new Blob([fileContent], { type: 'text/plain' }));
-        downloadLink.download = fileName;
-        downloadLink.textContent = 'Download ' + fileName;
-        downloadLink.className = 'download-link';
-        
-        // Add the link to the page
-        document.getElementById('downloadLinks').appendChild(downloadLink);
-        document.getElementById('downloadLinks').appendChild(document.createElement('br'));
-        
-        return true;
-    } catch (error) {
-        console.error(`Error extracting file ${fileName}:`, error);
-        throw error;
-    }
-}
-
-// Install Python packages
-async function installPythonPackages() {
-    try {
-        document.getElementById('packagesStatus').textContent = 'Installing Python packages...';
-        
-        // Create instructions for installing packages
-        const instructions = document.createElement('div');
-        instructions.innerHTML = `
-            <p>To install the required Python packages, open a command prompt and run:</p>
-            <code>pip install -r requirements.txt</code>
-            <p>Make sure you're in the backend directory when running this command.</p>
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'backend-info';
+        infoDiv.innerHTML = `
+            <h3>Backend Information</h3>
+            <p>Your extension is connected to the Socio.io backend running on Render.</p>
+            <p><strong>Backend URL:</strong> ${BACKEND_URL}</p>
+            <p>This backend provides content moderation services including:</p>
+            <ul>
+                <li>Text content filtering</li>
+                <li>Image content filtering</li>
+                <li>Content decryption for recovery</li>
+            </ul>
+            <p>The backend is hosted on Render and is always available - no local setup required!</p>
         `;
         
-        document.getElementById('packagesInstructions').appendChild(instructions);
-        
-        document.getElementById('packagesStatus').textContent = 'Please install Python packages manually';
+        document.getElementById('backendInfo').appendChild(infoDiv);
         return true;
     } catch (error) {
-        console.error("Error installing Python packages:", error);
-        document.getElementById('packagesStatus').textContent = 'Error installing Python packages: ' + error.message;
-        return false;
-    }
-}
-
-// Start the backend server
-async function startBackendServer() {
-    try {
-        document.getElementById('serverStatus').textContent = 'Starting backend server...';
-        
-        // Create instructions for starting the server
-        const instructions = document.createElement('div');
-        instructions.innerHTML = `
-            <p>To start the backend server, open a command prompt and run:</p>
-            <code>python app.py</code>
-            <p>Make sure you're in the backend directory when running this command.</p>
-        `;
-        
-        document.getElementById('serverInstructions').appendChild(instructions);
-        
-        document.getElementById('serverStatus').textContent = 'Please start the backend server manually';
-        return true;
-    } catch (error) {
-        console.error("Error starting backend server:", error);
-        document.getElementById('serverStatus').textContent = 'Error starting backend server: ' + error.message;
-        return false;
-    }
-}
-
-// Create a startup script
-async function createStartupScript() {
-    try {
-        document.getElementById('startupStatus').textContent = 'Creating startup script...';
-        
-        // Create a startup script
-        const scriptContent = `@echo off
-echo Starting Socio.io backend server...
-cd %~dp0
-python app.py
-pause`;
-        
-        // Create a download link for the script
-        const downloadLink = document.createElement('a');
-        downloadLink.href = URL.createObjectURL(new Blob([scriptContent], { type: 'text/plain' }));
-        downloadLink.download = 'start_backend.bat';
-        downloadLink.textContent = 'Download start_backend.bat';
-        downloadLink.className = 'button';
-        
-        document.getElementById('startupScript').appendChild(downloadLink);
-        
-        document.getElementById('startupStatus').textContent = 'Startup script created';
-        return true;
-    } catch (error) {
-        console.error("Error creating startup script:", error);
-        document.getElementById('startupStatus').textContent = 'Error creating startup script: ' + error.message;
+        console.error("Error displaying backend info:", error);
         return false;
     }
 }
@@ -182,30 +59,45 @@ pause`;
 // Run the setup process
 async function runSetup() {
     try {
-        document.getElementById('setupStatus').textContent = 'Setting up Socio.io...';
+        document.getElementById('setupStatus').textContent = 'Checking Socio.io backend...';
         
-        // Check if Python is installed
-        const pythonInstalled = await checkPythonInstalled();
+        // Check backend connection
+        const backendConnected = await checkBackendConnection();
         
-        // Extract backend files
-        const filesExtracted = await extractBackendFiles();
-        
-        // Install Python packages
-        const packagesInstalled = await installPythonPackages();
-        
-        // Create startup script
-        const startupScriptCreated = await createStartupScript();
-        
-        // Start the backend server
-        const serverStarted = await startBackendServer();
+        // Display backend information
+        const infoDisplayed = displayBackendInfo();
         
         // Update setup status
-        if (filesExtracted && packagesInstalled && startupScriptCreated) {
+        if (backendConnected) {
             document.getElementById('setupStatus').textContent = 'Setup completed successfully';
             document.getElementById('setupStatus').className = 'status-success';
+            
+            // Show success message
+            const successMessage = document.createElement('div');
+            successMessage.className = 'success-message';
+            successMessage.innerHTML = `
+                <h3>🎉 All Set!</h3>
+                <p>Your Socio.io extension is connected to the cloud backend and ready to use.</p>
+                <p>You can now browse the web with content moderation protection enabled.</p>
+            `;
+            document.getElementById('setupComplete').appendChild(successMessage);
         } else {
-            document.getElementById('setupStatus').textContent = 'Setup completed with some issues';
+            document.getElementById('setupStatus').textContent = 'Setup completed with connection issues';
             document.getElementById('setupStatus').className = 'status-warning';
+            
+            // Show troubleshooting tips
+            const troubleshootingTips = document.createElement('div');
+            troubleshootingTips.className = 'troubleshooting-tips';
+            troubleshootingTips.innerHTML = `
+                <h3>Troubleshooting Tips</h3>
+                <p>If you're having trouble connecting to the backend:</p>
+                <ul>
+                    <li>Check your internet connection</li>
+                    <li>Make sure the backend service is running on Render</li>
+                    <li>Try refreshing the page and checking again</li>
+                </ul>
+            `;
+            document.getElementById('setupComplete').appendChild(troubleshootingTips);
         }
         
         // Show the completion section
@@ -228,13 +120,13 @@ document.addEventListener('DOMContentLoaded', function() {
     
     document.getElementById('checkBackendBtn').addEventListener('click', function() {
         // Check if the backend is running
-        fetch('https://socio-backend-ipzg.onrender.com/ping')
+        fetch('https://socio-backend-2qrf.onrender.com/ping')
             .then(response => response.json())
             .then(data => {
                 alert('Backend is running! Status: ' + data.message);
             })
             .catch(error => {
-                alert('Backend is not running. Please start the backend server.');
+                alert('Backend is not running or cannot be reached. Please check the Render service status.');
             });
     });
 });

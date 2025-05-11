@@ -45,11 +45,11 @@ document.addEventListener('DOMContentLoaded', function() {
       });
     }
     
-    // Add start backend functionality
+    // Add backend status check functionality
     const startBackendBtn = document.getElementById('startBackendBtn');
     if (startBackendBtn) {
       startBackendBtn.addEventListener('click', function() {
-        // Open the backend instructions page
+        // Open the backend status page
         chrome.tabs.create({url: 'setup.html'});
       });
     }
@@ -126,7 +126,7 @@ document.addEventListener('DOMContentLoaded', function() {
           console.log("Backend is running according to background script");
           
           // Double-check with a direct connection test using the simple ping endpoint
-          fetch('https://socio-backend-ipzg.onrender.com/ping')
+          fetch('https://socio-backend-2qrf.onrender.com/ping')
             .then(response => response.json())
             .then(data => {
               console.log("Backend connection successful:", data);
@@ -175,16 +175,17 @@ document.addEventListener('DOMContentLoaded', function() {
         
         const errorMessageElement = document.querySelector('.error-message') || document.createElement('div');
         errorMessageElement.className = 'error-message';
-        errorMessageElement.innerHTML = 'Cannot connect to backend server. <br><strong>Please click "Start Backend" below to see instructions.</strong>';
+        errorMessageElement.innerHTML = 'Cannot connect to cloud backend server. <br><strong>Please click "Check Backend" below to verify the connection.</strong>';
         
         if (!errorMessageElement.parentNode) {
           document.querySelector('.container').insertBefore(errorMessageElement, document.querySelector('.stats'));
         }
         
-        // Show the start backend button
+        // Show the check backend button
         if (startBackendBtn) {
           startBackendBtn.style.display = 'inline-block';
           startBackendBtn.style.backgroundColor = '#f44336';
+          startBackendBtn.textContent = 'Check Backend';
         }
       }
     }
@@ -216,8 +217,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // Force an immediate stats update when popup opens
     loadStats();
     
-    // Set up periodic stats refresh (more frequent)
-    setInterval(loadStats, 1000); // Refresh stats every second
+    // Set up periodic stats refresh (less frequent to avoid flickering)
+    setInterval(loadStats, 3000); // Refresh stats every 3 seconds
     
     // Add a manual refresh button for testing
     const refreshStatsBtn = document.getElementById('refreshStatsBtn');
