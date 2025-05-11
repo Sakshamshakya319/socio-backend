@@ -2,7 +2,7 @@
 // This script runs on all web pages and moderates content
 
 // Configuration
-const API_BASE_URL = 'http://127.0.0.1:5000';
+const API_BASE_URL = 'https://socio-backend-ipzg.onrender.com'; // Updated to use Render deployment URL
 const EXCLUSION_CLASS = 'socioio-processed';
 const INDICATOR_CLASS = 'socioio-indicator';
 const BATCH_SIZE = 10;

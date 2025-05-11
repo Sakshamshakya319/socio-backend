@@ -228,7 +228,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     document.getElementById('checkBackendBtn').addEventListener('click', function() {
         // Check if the backend is running
-        fetch('http://127.0.0.1:5000/ping')
+        fetch('https://socio-backend-ipzg.onrender.com/ping')
             .then(response => response.json())
             .then(data => {
                 alert('Backend is running! Status: ' + data.message);

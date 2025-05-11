@@ -156,7 +156,7 @@ function processImageElement(element) {
         
         try {
             // Try to send to backend for analysis
-            const API_BASE_URL = 'http://127.0.0.1:5000';
+            const API_BASE_URL = 'https://socio-backend-ipzg.onrender.com';
             fetch(`${API_BASE_URL}/filter/image`, {
                 method: 'POST',
                 headers: {

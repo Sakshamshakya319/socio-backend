@@ -126,7 +126,7 @@ document.addEventListener('DOMContentLoaded', function() {
           console.log("Backend is running according to background script");
           
           // Double-check with a direct connection test using the simple ping endpoint
-          fetch('http://127.0.0.1:5000/ping')
+          fetch('https://socio-backend-ipzg.onrender.com/ping')
             .then(response => response.json())
             .then(data => {
               console.log("Backend connection successful:", data);

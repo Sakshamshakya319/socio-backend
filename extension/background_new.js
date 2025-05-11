@@ -44,7 +44,7 @@ function updateBadge() {
 function checkBackendStatus() {
   console.log("Checking backend status via HTTP...");
   
-  fetch('http://127.0.0.1:5000/ping')
+  fetch('https://socio-backend-ipzg.onrender.com/ping')
     .then(response => response.json())
     .then(data => {
       console.log("Backend is running:", data);
