@@ -46,3 +46,13 @@ __pycache__/
 *$py.class
 venv/
 env/
+
+# Google Cloud credentials
+*-[0-9]*-[0-9]*.json
+google_credentials.json
+my-project-*.json
+
+# But don't ignore these JSON files
+!package.json
+!manifest.json
+!vercel.json

@@ -1,0 +1,106 @@
+# Socio.io Content Moderation System
+
+A comprehensive content moderation system with a Chrome extension and backend server that filters and moderates inappropriate content on the web.
+
+## 🚀 Features
+
+* 🧹 **Advanced Text Moderation**: Detects and filters explicit or inappropriate text using AI and pattern matching
+* 🖼️ **Google Cloud Vision Image Moderation**: Uses Google Cloud Vision API to detect and filter inappropriate images
+* ♻️ **Content Recovery**: Restore filtered content anytime
+* 🕒 **History Tracking**: Logs filtered content for review
+* 🧭 **Simple UI**: Easy toggle and intuitive interface
+
+## 📋 System Components
+
+### 1. Chrome Extension
+- Injects into web pages to filter images and text
+- Communicates with the backend server for content analysis
+- Provides user interface for controlling filtering settings
+
+### 2. Backend Server
+- Node.js Express server for handling API requests
+- Python integration for advanced content filtering
+- Google Cloud Vision API integration for image analysis
+
+## 🔧 Setup and Installation
+
+### Backend Server Setup
+
+1. **Install Dependencies**:
+   ```bash
+   cd backend
+   npm install
+   pip install -r requirements.txt
+   ```
+
+2. **Google Cloud Credentials**:
+   - Place your Google Cloud credentials file (`my-project-92814-457204-c90e6bf83130.json`) in the `backend` directory
+   - The server will automatically use these credentials for image analysis
+
+3. **Start the Server**:
+   ```bash
+   cd backend
+   npm start
+   ```
+   
+   The server will start on port 5000 by default.
+
+### Chrome Extension Setup
+
+1. **Load the Extension**:
+   - Open Chrome and go to `chrome://extensions/`
+   - Enable "Developer mode"
+   - Click "Load unpacked" and select the `extension` directory
+
+2. **Configure the Extension**:
+   - Click on the extension icon in the toolbar
+   - Go to the settings tab
+   - Enter the backend server URL (e.g., `http://localhost:5000`)
+
+## 🔌 API Endpoints
+
+The backend server provides the following API endpoints:
+
+- **GET /ping**: Simple health check endpoint
+- **POST /filter/text**: Analyzes and filters text content
+  - Input: JSON with `text` field
+  - Output: Filtered text and analysis results
+- **POST /filter/image**: Analyzes and filters image URLs
+  - Input: JSON with `url` field
+  - Output: Determination if image should be filtered
+- **POST /decrypt**: Decrypts previously encrypted content
+  - Input: JSON with `encrypted` field
+  - Output: Decrypted content
+- **GET /status**: Returns server status and statistics
+
+## 🔐 Privacy and Security
+
+- Google Cloud credentials are used securely and not exposed to clients
+- Sensitive content is encrypted before storage
+- No user data is stored permanently
+- All processing happens on your own server
+
+## 🛠️ Advanced Configuration
+
+### Environment Variables
+
+Create a `.env` file in the backend directory with the following variables:
+
+```
+PORT=5000
+GOOGLE_APPLICATION_CREDENTIALS=./my-project-92814-457204-c90e6bf83130.json
+```
+
+### Python Integration
+
+The backend uses Python scripts for advanced content filtering:
+
+- `image_content_filter.py`: Uses Google Cloud Vision API for image analysis
+- `text_analysis.py`: Advanced text analysis with pattern matching and AI
+- `python_bridge.js`: Node.js bridge to Python scripts
+
+## 🙌 Contribute & Support
+
+* Found a bug? [Open an issue](https://github.com/yourusername/socio-io/issues)
+* Contributions welcome via pull requests!
+* Licensed under the MIT License

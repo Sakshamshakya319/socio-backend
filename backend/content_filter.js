@@ -1,6 +1,7 @@
 /**
  * Content Filter Module for Socio.io
  * This module provides content moderation functionality for text and images.
+ * It uses Python scripts for advanced content filtering with Google Cloud Vision and text analysis.
  */
 
 const crypto = require('crypto');
@@ -9,6 +10,9 @@ const fetch = require('node-fetch');
 const { URL } = require('url');
 const winston = require('winston');
 const textAnalysis = require('./text_analysis');
+const PythonBridge = require('./python_bridge');
+const path = require('path');
+const fs = require('fs');
 
 // Configure logging
 const logger = winston.createLogger({
@@ -48,6 +52,26 @@ class ContentFilter {
     // Compile patterns for efficiency
     this.compiledPatterns = this.inappropriatePatterns.map(pattern => new RegExp(pattern, 'i'));
     
+    // Initialize Python bridge for advanced content filtering
+    try {
+      this.pythonBridge = new PythonBridge();
+      logger.info('Python bridge initialized for advanced content filtering');
+      this.pythonAvailable = true;
+    } catch (error) {
+      logger.error(`Error initializing Python bridge: ${error.message}`);
+      this.pythonAvailable = false;
+    }
+    
+    // Check if Google Cloud credentials are available
+    this.googleCloudAvailable = false;
+    const credentialsPath = path.join(__dirname, 'my-project-92814-457204-c90e6bf83130.json');
+    if (fs.existsSync(credentialsPath)) {
+      logger.info('Google Cloud credentials found');
+      this.googleCloudAvailable = true;
+    } else {
+      logger.warn('Google Cloud credentials not found');
+    }
+    
     logger.info('Content filter initialized');
   }
   
@@ -57,7 +81,7 @@ class ContentFilter {
    * @param {string} text - The text to filter
    * @returns {object} Result of the filtering operation
    */
-  filterText(text) {
+  async filterText(text) {
     this.stats.total_requests += 1;
     
     if (!text || text.length < 3) {
@@ -68,6 +92,28 @@ class ContentFilter {
         modified: text
       };
     }
+    
+    // Try to use Python for advanced filtering if available
+    if (this.pythonAvailable) {
+      try {
+        logger.info('Using Python for advanced text filtering');
+        const result = await this.pythonBridge.filterText(text);
+        
+        // Update stats if content was filtered
+        if (result.filtered) {
+          this.stats.text_filtered += 1;
+        }
+        
+        return result;
+      } catch (error) {
+        logger.error(`Error using Python for text filtering: ${error.message}`);
+        logger.info('Falling back to JavaScript implementation');
+        // Fall back to JavaScript implementation
+      }
+    }
+    
+    // Use the JavaScript implementation as fallback
+    logger.info('Using JavaScript implementation for text filtering');
     
     // Use the text analysis module for more comprehensive detection
     const analysisResults = textAnalysis.analyzeText(text);
@@ -134,7 +180,7 @@ class ContentFilter {
    * @param {string} imageUrl - URL of the image to filter
    * @returns {object} Result of the filtering operation
    */
-  filterImage(imageUrl) {
+  async filterImage(imageUrl) {
     this.stats.total_requests += 1;
     
     // Validate URL
@@ -157,6 +203,28 @@ class ContentFilter {
         modified: imageUrl
       };
     }
+    
+    // Try to use Python for advanced filtering if available
+    if (this.pythonAvailable && this.googleCloudAvailable) {
+      try {
+        logger.info('Using Python with Google Cloud Vision for advanced image filtering');
+        const result = await this.pythonBridge.filterImage(imageUrl);
+        
+        // Update stats if content was filtered
+        if (result.filtered) {
+          this.stats.images_filtered += 1;
+        }
+        
+        return result;
+      } catch (error) {
+        logger.error(`Error using Python for image filtering: ${error.message}`);
+        logger.info('Falling back to JavaScript implementation');
+        // Fall back to JavaScript implementation
+      }
+    }
+    
+    // Use the JavaScript implementation as fallback
+    logger.info('Using JavaScript implementation for image filtering');
     
     // For demonstration purposes, we'll filter images based on URL patterns
     // In a real implementation, you would use image recognition APIs
@@ -233,7 +301,23 @@ class ContentFilter {
    * @param {string} encrypted - Encrypted content as a base64 string
    * @returns {string} Decrypted content
    */
-  decryptContent(encrypted) {
+  async decryptContent(encrypted) {
+    // Try to use Python for decryption if available
+    if (this.pythonAvailable) {
+      try {
+        logger.info('Using Python for decryption');
+        const result = await this.pythonBridge.decryptContent(encrypted);
+        return result.decrypted || '';
+      } catch (error) {
+        logger.error(`Error using Python for decryption: ${error.message}`);
+        logger.info('Falling back to JavaScript implementation');
+        // Fall back to JavaScript implementation
+      }
+    }
+    
+    // Use the JavaScript implementation as fallback
+    logger.info('Using JavaScript implementation for decryption');
+    
     try {
       // Decrypt the content using CryptoJS
       const bytes = CryptoJS.AES.decrypt(encrypted, this.key);
@@ -251,7 +335,11 @@ class ContentFilter {
    * @returns {object} Statistics about filtered content
    */
   getStats() {
-    return this.stats;
+    return {
+      ...this.stats,
+      python_available: this.pythonAvailable,
+      google_cloud_available: this.googleCloudAvailable
+    };
   }
 }
 
