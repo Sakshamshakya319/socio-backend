@@ -2,7 +2,7 @@
 // This script runs on all web pages and moderates content
 
 // Configuration
-const API_BASE_URL = 'https://socio-backend-2qrf.onrender.com'; // Cloud backend URL
+const API_BASE_URL = 'https://socio-backend-zxxd.onrender.com'; // Cloud backend URL
 const BATCH_SIZE = 50; // Process more elements at once
 const DEBOUNCE_DELAY = 100; // Reduce debounce delay for faster response
 const BACKEND_CHECK_INTERVAL = 5000; // Check backend status every 5 seconds
@@ -87,39 +87,48 @@ function initialize() {
         // Set up mutation observer to detect new images
         setupImageMutationObserver();
         
-        // Check if we should be enabled (but don't wait for this)
+        // Check if we should be enabled (and wait for this before proceeding)
         chrome.storage.local.get(['enabled'], function(result) {
             try {
                 isEnabled = result.enabled !== false;  // Default to true if not set
                 debug("Protection enabled:", isEnabled);
+                
+                // Only proceed with content filtering if enabled
+                if (isEnabled) {
+                    // Immediately blur all images on the page for faster response
+                    setTimeout(() => {
+                        debug("Applying immediate blur to all images");
+                        applyImmediateBlurToAllImages();
+                        
+                        // Scan the page immediately for existing content
+                        debug("Performing initial page scan");
+                        scanContentForModeration();
+                        
+                        // Set up a periodic scan to catch any missed content
+                        window.socioIntervalScan = setInterval(() => {
+                            if (isEnabled) {
+                                debug("Performing periodic scan");
+                                scanContentForModeration();
+                            }
+                        }, 3000); // Scan every 3 seconds
+                        
+                        // Set up a more frequent scan for images only
+                        window.socioIntervalImageScan = setInterval(() => {
+                            if (isEnabled) {
+                                debug("Performing image-only scan");
+                                scanImagesForModeration();
+                            }
+                        }, 1000); // Scan for images every second
+                    }, 500); // Small delay to ensure DOM is ready
+                } else {
+                    debug("Protection is disabled. No content filtering will be performed.");
+                }
             } catch (innerError) {
                 console.error("Error getting enabled state:", innerError);
                 // Default to enabled
                 isEnabled = true;
             }
         });
-        
-        // Immediately blur all images on the page for faster response
-        setTimeout(() => {
-            debug("Applying immediate blur to all images");
-            applyImmediateBlurToAllImages();
-            
-            // Scan the page immediately for existing content
-            debug("Performing initial page scan");
-            scanContentForModeration();
-            
-            // Set up a periodic scan to catch any missed content
-            setInterval(() => {
-                debug("Performing periodic scan");
-                scanContentForModeration();
-            }, 3000); // Scan every 3 seconds
-            
-            // Set up a more frequent scan for images only
-            setInterval(() => {
-                debug("Performing image-only scan");
-                scanImagesForModeration();
-            }, 1000); // Scan for images every second
-        }, 500); // Small delay to ensure DOM is ready
         
     } catch (error) {
         console.error("Error during extension initialization:", error);
@@ -144,15 +153,59 @@ function setupMessageListener() {
             
             switch (message.action) {
                 case 'toggleProtection':
+                case 'setEnabled':
+                    const previousState = isEnabled;
                     isEnabled = message.enabled;
-                    debug("Protection toggled to:", isEnabled);
+                    debug("Protection toggled from", previousState, "to:", isEnabled);
                     
-                    if (isEnabled) {
+                    if (isEnabled && !previousState) {
+                        // Protection was turned on
+                        debug("Protection turned ON - starting content moderation");
+                        
+                        // Start the intervals if they don't exist
+                        if (!window.socioIntervalScan) {
+                            window.socioIntervalScan = setInterval(() => {
+                                if (isEnabled) {
+                                    debug("Performing periodic scan");
+                                    scanContentForModeration();
+                                }
+                            }, 3000);
+                        }
+                        
+                        if (!window.socioIntervalImageScan) {
+                            window.socioIntervalImageScan = setInterval(() => {
+                                if (isEnabled) {
+                                    debug("Performing image-only scan");
+                                    scanImagesForModeration();
+                                }
+                            }, 1000);
+                        }
+                        
+                        // Perform an immediate scan
                         scanContentForModeration();
-                    } else {
+                    } else if (!isEnabled && previousState) {
+                        // Protection was turned off
+                        debug("Protection turned OFF - stopping content moderation and restoring content");
+                        
+                        // Clear the intervals
+                        if (window.socioIntervalScan) {
+                            clearInterval(window.socioIntervalScan);
+                            window.socioIntervalScan = null;
+                        }
+                        
+                        if (window.socioIntervalImageScan) {
+                            clearInterval(window.socioIntervalImageScan);
+                            window.socioIntervalImageScan = null;
+                        }
+                        
+                        // Restore all original content
                         restoreOriginalContent();
                     }
-                    sendResponse({status: "Protection toggled"});
+                    
+                    // Save the state to storage
+                    chrome.storage.local.set({ enabled: isEnabled });
+                    
+                    sendResponse({status: "Protection toggled", enabled: isEnabled});
                     break;
                 
                 case 'getEncryptedContent':
@@ -1738,14 +1791,64 @@ function restoreOriginalContent() {
     debug("Restoring original content");
     
     // Remove all socioio elements
-    document.querySelectorAll('.socioio-blocked-image, .socioio-image-overlay, .' + INDICATOR_CLASS).forEach(el => {
-        el.parentNode.removeChild(el);
+    document.querySelectorAll('.socioio-blocked-image, .socioio-image-overlay, .socioio-image-wrapper, .' + INDICATOR_CLASS).forEach(el => {
+        try {
+            el.parentNode.removeChild(el);
+        } catch (e) {
+            debug("Error removing element:", e);
+        }
     });
     
     // Remove blur from all images
-    document.querySelectorAll('img[style*="blur"]').forEach(img => {
-        img.style.filter = 'none';
+    document.querySelectorAll('img[style*="blur"], .socioio-filtered-image, img[data-socioio-filtered="true"]').forEach(img => {
+        try {
+            img.style.filter = 'none';
+            img.style.border = '';
+            img.classList.remove('socioio-filtered-image');
+            img.removeAttribute('data-socioio-filtered');
+            
+            // If the image has an original src, restore it
+            if (img.dataset.originalSrc) {
+                img.src = img.dataset.originalSrc;
+                img.removeAttribute('data-original-src');
+            }
+            
+            // If the image is in a wrapper, unwrap it
+            if (img.parentNode && img.parentNode.classList && img.parentNode.classList.contains('socioio-image-wrapper')) {
+                const wrapper = img.parentNode;
+                const parent = wrapper.parentNode;
+                parent.insertBefore(img, wrapper);
+                parent.removeChild(wrapper);
+            }
+        } catch (e) {
+            debug("Error restoring image:", e);
+        }
     });
+    
+    // Restore filtered text
+    document.querySelectorAll('.socioio-filtered-text').forEach(el => {
+        try {
+            if (el.dataset.originalText) {
+                el.textContent = el.dataset.originalText;
+                el.removeAttribute('data-original-text');
+            }
+            el.classList.remove('socioio-filtered-text');
+            el.style = '';
+        } catch (e) {
+            debug("Error restoring text:", e);
+        }
+    });
+    
+    // Remove any remaining overlays
+    document.querySelectorAll('.socioio-overlay').forEach(el => {
+        try {
+            el.parentNode.removeChild(el);
+        } catch (e) {
+            debug("Error removing overlay:", e);
+        }
+    });
+    
+    debug("Content restoration complete");
 }
 
 // Apply recovered content from popup

@@ -15,7 +15,7 @@
   "host_permissions": [
     "http://localhost:5000/*",
     "http://127.0.0.1:5000/*",
-    "https://socio-backend-2qrf.onrender.com/*"
+    "https://socio-backend-zxxd.onrender.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -33,7 +33,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["image-processor.js", "content-new.js"],
+      "js": ["text-processor.js", "image-processor.js", "content-text-processor.js", "content-new.js"],
       "css": ["content.css"],
       "run_at": "document_end"
     }

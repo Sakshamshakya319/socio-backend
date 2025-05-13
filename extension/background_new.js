@@ -11,13 +11,17 @@ let state = {
   backendNotificationShown: false
 };
 
-// Initialize counters from storage
-function initCounters() {
-  chrome.storage.local.get(['textFiltered', 'imagesFiltered'], function(result) {
+// Initialize extension state from storage
+function initExtensionState() {
+  chrome.storage.local.get(['textFiltered', 'imagesFiltered', 'enabled'], function(result) {
+    // Initialize counters
     state.textFiltered = parseInt(result.textFiltered) || 0;
     state.imagesFiltered = parseInt(result.imagesFiltered) || 0;
     
-    console.log("Initialized counters - Text:", state.textFiltered, "Images:", state.imagesFiltered);
+    // Initialize enabled state (default to true if not set)
+    state.enabled = result.enabled !== undefined ? result.enabled : true;
+    
+    console.log("Initialized state - Enabled:", state.enabled, "Text:", state.textFiltered, "Images:", state.imagesFiltered);
     
     // Make sure we have valid numbers
     if (isNaN(state.textFiltered)) state.textFiltered = 0;
@@ -25,14 +29,35 @@ function initCounters() {
     
     // Store the values back to ensure consistency
     chrome.storage.local.set({
+      'enabled': state.enabled,
       'textFiltered': state.textFiltered,
       'imagesFiltered': state.imagesFiltered
     }, function() {
-      console.log("Counters stored back to storage");
+      console.log("State stored back to storage");
     });
     
     // Update badge with current counts
     updateBadge();
+    
+    // Notify all tabs about the current enabled state
+    notifyAllTabsAboutEnabledState();
+  });
+}
+
+// Notify all tabs about the current enabled state
+function notifyAllTabsAboutEnabledState() {
+  chrome.tabs.query({}, function(tabs) {
+    for (let tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, {
+        action: "setEnabled", 
+        enabled: state.enabled
+      }, function(response) {
+        // Ignore errors when content script isn't loaded
+        if (chrome.runtime.lastError) {
+          console.log(`Could not send message to tab ${tab.id}: ${chrome.runtime.lastError.message}`);
+        }
+      });
+    }
   });
 }
 
@@ -72,7 +97,7 @@ function updateBadge() {
 function checkBackendStatus() {
   console.log("Checking backend status via HTTP...");
   
-  fetch('https://socio-backend-2qrf.onrender.com/ping')
+  fetch('https://socio-backend-zxxd.onrender.com/ping')
     .then(response => response.json())
     .then(data => {
       console.log("Backend is running:", data);
@@ -164,7 +189,7 @@ chrome.runtime.onInstalled.addListener(function() {
 });
 
 // Call initialization
-initCounters();
+initExtensionState();
 
 // Listen for messages from content script or popup
 chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
@@ -265,6 +290,33 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         
         return true;
         break;
+        
+      case 'setEnabled':
+        state.enabled = message.enabled;
+        chrome.storage.local.set({ enabled: state.enabled });
+        
+        // Notify all tabs about the state change
+        chrome.tabs.query({}, function(tabs) {
+          for (let tab of tabs) {
+            chrome.tabs.sendMessage(tab.id, {
+              action: "setEnabled", 
+              enabled: state.enabled
+            }, function(response) {
+              // Ignore errors when content script isn't loaded
+              if (chrome.runtime.lastError) {
+                console.log(`Could not send message to tab ${tab.id}: ${chrome.runtime.lastError.message}`);
+              }
+            });
+          }
+        });
+        
+        sendResponse({
+          success: true,
+          enabled: state.enabled
+        });
+        
+        return true;
+        break;
       
       case 'contentScriptActive':
         console.log("Content script is active on:", message.url);
@@ -272,10 +324,11 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
         // Check backend status
         checkBackendStatus();
         
-        // Send the current backend status to the content script
+        // Send the current backend status and enabled state to the content script
         sendResponse({
           status: "Background acknowledged content script",
-          backendRunning: state.backendRunning
+          backendRunning: state.backendRunning,
+          enabled: state.enabled
         });
         
         return true;

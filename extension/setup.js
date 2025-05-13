@@ -2,7 +2,7 @@
 console.log("Socio.io setup script loaded");
 
 // Configuration
-const BACKEND_URL = 'https://socio-backend-2qrf.onrender.com';
+const BACKEND_URL = 'https://socio-backend-zxxd.onrender.com';
 
 // Check backend connection
 async function checkBackendConnection() {
@@ -120,7 +120,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     document.getElementById('checkBackendBtn').addEventListener('click', function() {
         // Check if the backend is running
-        fetch('https://socio-backend-2qrf.onrender.com/ping')
+        fetch('https://socio-backend-zxxd.onrender.com/ping')
             .then(response => response.json())
             .then(data => {
                 alert('Backend is running! Status: ' + data.message);

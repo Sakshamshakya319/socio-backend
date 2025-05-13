@@ -1,6 +1,62 @@
 // Enhanced Image Processor for Socio.io
 // This module provides robust client-side image filtering
 
+// Function to analyze image using the backend API
+async function analyzeImage(file) {
+    try {
+        debug("Analyzing image with backend API");
+        const formData = new FormData();
+        formData.append('image', file);
+        
+        // First try the cloud backend
+        const API_BASE_URL = 'https://socio-backend-zxxd.onrender.com';
+        
+        try {
+            const response = await fetch(`${API_BASE_URL}/analyze`, {
+                method: 'POST',
+                body: formData,
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Cloud backend returned status ${response.status}`);
+            }
+            
+            const result = await response.json();
+            if (result.success) {
+                debug('Cloud Analysis Results:', result.results);
+                return result.results;
+            } else {
+                debug('Cloud Analysis Error:', result.error);
+                throw new Error(result.error);
+            }
+        } catch (cloudError) {
+            debug("Cloud backend failed, trying local backend:", cloudError);
+            
+            // If cloud backend fails, try local backend
+            const response = await fetch('http://localhost:5000/analyze', {
+                method: 'POST',
+                body: formData,
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Local backend returned status ${response.status}`);
+            }
+            
+            const result = await response.json();
+            if (result.success) {
+                debug('Local Analysis Results:', result.results);
+                return result.results;
+            } else {
+                debug('Local Analysis Error:', result.error);
+                throw new Error(result.error);
+            }
+        }
+    } catch (error) {
+        debug('Image Analysis Error:', error);
+        throw error;
+    }
+}
+
 // Debug logging with clear identification
 function debug(message, obj = null) {
     const timestamp = new Date().toISOString();
@@ -203,77 +259,101 @@ function processImageElement(element) {
         // Always send to backend for analysis
         try {
             debug("Sending image to backend for analysis");
-            const API_BASE_URL = 'https://socio-backend-2qrf.onrender.com';
             
-            // Send to backend for analysis
-            fetch(`${API_BASE_URL}/filter/image`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    url: src
-                })
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`Backend returned status ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                debug("Image analysis response:", data);
-                
-                // Find the element again using the unique class (in case DOM changed)
-                const updatedElement = document.querySelector('.' + uniqueId);
-                if (!updatedElement) {
-                    debug("Element no longer in DOM after backend response");
-                    return;
-                }
-                
-                // For testing purposes, always filter images regardless of backend response
-                // This ensures the extension works even if the backend is slow
-                debug("Applying aggressive filtering for testing");
-                updatedElement.style.filter = "blur(20px)";
-                updatedElement.style.border = "3px solid red";
-                
-                // Mark as filtered
-                updatedElement.setAttribute('data-socioio-filtered', 'true');
-                
-                // Update stats
-                try {
-                    chrome.runtime.sendMessage({
-                        action: 'updateStats',
-                        type: 'images',
-                        count: 1
-                    }, function(response) {
-                        debug("Stats update response:", response);
-                    });
-                } catch (e) {
-                    debug("Error updating stats:", e);
-                    
-                    // Try direct storage update as fallback
-                    try {
-                        chrome.storage.local.get(['imagesFiltered'], function(result) {
-                            const current = parseInt(result.imagesFiltered) || 0;
-                            chrome.storage.local.set({ 'imagesFiltered': current + 1 });
-                        });
-                    } catch (storageError) {
-                        debug("Error updating storage:", storageError);
+            // First, try to fetch the image as a blob
+            fetch(src)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch image: ${response.status}`);
                     }
-                }
+                    return response.blob();
+                })
+                .then(blob => {
+                    // Create a File object from the blob
+                    const imageFile = new File([blob], "image.jpg", { type: blob.type });
+                    
+                    // Use our new analyzeImage function
+                    return analyzeImage(imageFile);
+                })
+                .then(results => {
+                    debug("Image analysis results:", results);
+                    
+                    // Find the element again using the unique class (in case DOM changed)
+                    const updatedElement = document.querySelector('.' + uniqueId);
+                    if (!updatedElement) {
+                        debug("Element no longer in DOM after backend response");
+                        return;
+                    }
+                    
+                    // Determine if we should filter based on the analysis results
+                    const shouldFilter = results.overall_safety === "unsafe" || 
+                                        results.overall_safety === "questionable" ||
+                                        results.suggested_action === "block" ||
+                                        results.suggested_action === "blur";
+                    
+                    if (shouldFilter) {
+                        debug("Applying filtering based on analysis results");
+                        
+                        // Apply blur based on safety level
+                        if (results.overall_safety === "unsafe") {
+                            updatedElement.style.filter = "blur(30px)";
+                            updatedElement.style.border = "3px solid red";
+                        } else if (results.overall_safety === "questionable") {
+                            updatedElement.style.filter = "blur(15px)";
+                            updatedElement.style.border = "2px solid orange";
+                        } else {
+                            updatedElement.style.filter = "blur(8px)";
+                            updatedElement.style.border = "1px solid yellow";
+                        }
+                        
+                        // Mark as filtered
+                        updatedElement.setAttribute('data-socioio-filtered', 'true');
+                        
+                        // Store the content flags for display
+                        if (results.content_flags && results.content_flags.length > 0) {
+                            updatedElement.setAttribute('data-filter-reason', results.content_flags.join(', '));
+                        }
+                        
+                        // Update stats
+                        try {
+                            chrome.runtime.sendMessage({
+                                action: 'updateStats',
+                                type: 'images',
+                                count: 1
+                            }, function(response) {
+                                debug("Stats update response:", response);
+                            });
+                        } catch (e) {
+                            debug("Error updating stats:", e);
+                            
+                            // Try direct storage update as fallback
+                            try {
+                                chrome.storage.local.get(['imagesFiltered'], function(result) {
+                                    const current = parseInt(result.imagesFiltered) || 0;
+                                    chrome.storage.local.set({ 'imagesFiltered': current + 1 });
+                                });
+                            } catch (storageError) {
+                                debug("Error updating storage:", storageError);
+                            }
+                        }
+                    } else {
+                        debug("Image passed analysis, not filtering");
+                    }
+                })
             })
             .catch(error => {
                 debug("Error calling backend API:", error);
                 
-                // Always filter images if backend call fails
-                // This ensures the extension works even if the backend is down
+                // Apply a fallback filtering strategy if the backend analysis fails
                 const updatedElement = document.querySelector('.' + uniqueId);
                 if (updatedElement) {
-                    debug("Applying filter (backend unavailable)");
-                    updatedElement.style.filter = "blur(20px)";
-                    updatedElement.style.border = "3px solid red";
+                    debug("Applying fallback filter (backend unavailable)");
+                    
+                    // Apply a moderate blur as a precaution
+                    updatedElement.style.filter = "blur(15px)";
+                    updatedElement.style.border = "2px solid orange";
                     updatedElement.setAttribute('data-socioio-filtered', 'true');
+                    updatedElement.setAttribute('data-filter-reason', 'Backend analysis unavailable - applied precautionary filter');
                     
                     // Update stats
                     try {
@@ -301,23 +381,23 @@ function processImageElement(element) {
             });
         } catch (apiError) {
             debug("Error in API call:", apiError);
-            // Keep the temporary blur if it was applied
-        }
-        
-        if (shouldFilter) {
-            debug("Image filtering criteria met - applying blur");
-            // Apply blur effect
-            element.style.filter = "blur(20px)";
             
-            // Mark the image as filtered
-            element.setAttribute('data-socioio-filtered', 'true');
-        } else {
-            debug("Image appears safe - not filtering");
-            return { status: "kept", reason: "image_appears_safe" };
+            // Apply a fallback filtering strategy if there's an error in the API call
+            const updatedElement = document.querySelector('.' + uniqueId);
+            if (updatedElement) {
+                debug("Applying fallback filter (API error)");
+                updatedElement.style.filter = "blur(15px)";
+                updatedElement.style.border = "2px solid orange";
+                updatedElement.setAttribute('data-socioio-filtered', 'true');
+                updatedElement.setAttribute('data-filter-reason', 'API error - applied precautionary filter');
+                
+                // Update stats
+                updateStats('image');
+            }
         }
         
-        // We already checked if we should filter above, so this is redundant
-        // Just continue with creating the wrapper
+        // The filtering decision is now handled in the promise chain above
+        // Continue with creating the wrapper for overlay functionality
         
         // Create a wrapper for the image if it doesn't exist
         let wrapper = element.closest('.socioio-image-container');
@@ -377,31 +457,64 @@ function processImageElement(element) {
             
             // Add content to the overlay
             overlay.innerHTML = `
-                <div style="max-width: 90%; padding: 15px;">
+                <div style="max-width: 90%; padding: 15px; text-align: center;">
                     <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
-                    <div style="font-weight: bold; margin-bottom: 10px;">Image Content Filtered</div>
-                    <div style="font-size: 12px; margin-bottom: 10px;">This image has been blurred by Socio.io</div>
-                    <div style="font-style: italic; font-size: 12px; border: 1px solid #aaa; display: inline-block; padding: 3px 8px; border-radius: 3px;">Click to view</div>
+                    <div style="font-weight: bold; margin-bottom: 10px; color: #333;">Image Content Filtered</div>
+                    <div style="font-size: 12px; margin-bottom: 15px; color: #555;">This image has been blurred by Socio.io</div>
+                    <button id="view-image-btn-${uniqueId}" style="background-color: #4285f4; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background-color 0.3s;">
+                        View Image
+                    </button>
+                    <div style="font-size: 10px; margin-top: 8px; color: #888;">Click again to reblur</div>
                 </div>
             `;
             
-            // Add click handler to toggle blur
+            // Add click handler to the button
+            const viewButton = overlay.querySelector(`#view-image-btn-${uniqueId}`);
+            if (viewButton) {
+                viewButton.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    if (element.style.filter === "blur(20px)") {
+                        // Remove blur
+                        element.style.filter = "none";
+                        // Update button text
+                        viewButton.textContent = "Blur Image";
+                        viewButton.style.backgroundColor = "#f44336";
+                    } else {
+                        // Apply blur
+                        element.style.filter = "blur(20px)";
+                        // Update button text
+                        viewButton.textContent = "View Image";
+                        viewButton.style.backgroundColor = "#4285f4";
+                    }
+                });
+            }
+            
+            // Add click handler to the overlay (outside the button)
             overlay.addEventListener('click', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                if (element.style.filter === "blur(20px)") {
-                    // Remove blur
-                    element.style.filter = "none";
-                    // Hide overlay
-                    overlay.style.opacity = '0';
-                    overlay.style.pointerEvents = 'none';
-                } else {
-                    // Apply blur
-                    element.style.filter = "blur(20px)";
-                    // Show overlay
-                    overlay.style.opacity = '1';
-                    overlay.style.pointerEvents = 'auto';
+                // Only handle clicks directly on the overlay (not on the button)
+                if (e.target === overlay) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    if (element.style.filter === "blur(20px)") {
+                        // Remove blur
+                        element.style.filter = "none";
+                        // Update button text if it exists
+                        if (viewButton) {
+                            viewButton.textContent = "Blur Image";
+                            viewButton.style.backgroundColor = "#f44336";
+                        }
+                    } else {
+                        // Apply blur
+                        element.style.filter = "blur(20px)";
+                        // Update button text if it exists
+                        if (viewButton) {
+                            viewButton.textContent = "View Image";
+                            viewButton.style.backgroundColor = "#4285f4";
+                        }
+                    }
                 }
             });
             

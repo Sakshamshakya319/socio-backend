@@ -28,6 +28,84 @@ document.addEventListener('DOMContentLoaded', function() {
         return false;
     }
     
+    // Initialize protection toggle
+    function initProtectionToggle() {
+        const protectionToggle = safeGetElement('protectionToggle');
+        const toggleStatus = safeGetElement('toggleStatus');
+        
+        if (!protectionToggle || !toggleStatus) return;
+        
+        // Get current state from storage
+        chrome.storage.local.get(['enabled'], function(result) {
+            const isEnabled = result.enabled !== undefined ? result.enabled : true;
+            
+            // Set initial toggle state
+            protectionToggle.checked = isEnabled;
+            toggleStatus.textContent = isEnabled ? 'ON' : 'OFF';
+            toggleStatus.className = isEnabled ? 'toggle-status on' : 'toggle-status off';
+            
+            // Notify all tabs about the current state
+            updateAllTabs(isEnabled);
+        });
+        
+        // Add event listener for toggle changes
+        protectionToggle.addEventListener('change', function() {
+            const isEnabled = protectionToggle.checked;
+            
+            // Update UI
+            toggleStatus.textContent = isEnabled ? 'ON' : 'OFF';
+            toggleStatus.className = isEnabled ? 'toggle-status on' : 'toggle-status off';
+            
+            // Save to storage
+            chrome.storage.local.set({ enabled: isEnabled });
+            
+            // Notify background script
+            chrome.runtime.sendMessage({
+                action: 'setEnabled',
+                enabled: isEnabled
+            });
+            
+            // Notify all tabs about the state change
+            updateAllTabs(isEnabled);
+        });
+    }
+    
+    // Update all tabs with the current protection state
+    function updateAllTabs(isEnabled) {
+        console.log("Updating all tabs with protection state:", isEnabled);
+        
+        // First update the background script
+        chrome.runtime.sendMessage({
+            action: 'setEnabled',
+            enabled: isEnabled
+        }, function(response) {
+            console.log("Background script response:", response);
+        });
+        
+        // Then update all tabs
+        chrome.tabs.query({}, function(tabs) {
+            console.log(`Sending protection state to ${tabs.length} tabs`);
+            
+            for (let tab of tabs) {
+                try {
+                    chrome.tabs.sendMessage(tab.id, {
+                        action: 'setEnabled',
+                        enabled: isEnabled
+                    }, function(response) {
+                        // Ignore errors when content script isn't loaded
+                        if (chrome.runtime.lastError) {
+                            console.log(`Could not send message to tab ${tab.id}: ${chrome.runtime.lastError.message}`);
+                        } else if (response) {
+                            console.log(`Tab ${tab.id} response:`, response);
+                        }
+                    });
+                } catch (e) {
+                    console.error(`Error sending message to tab ${tab.id}:`, e);
+                }
+            }
+        });
+    }
+    
     // Get references to UI elements using the safe method
     const statsContainer = safeGetElement('statsContainer');
     const historyContainer = safeGetElement('historyContainer');
@@ -386,7 +464,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        fetch('https://socio-backend-2qrf.onrender.com/ping')
+        fetch('https://socio-backend-zxxd.onrender.com/ping')
             .then(response => response.json())
             .then(data => {
                 console.log("Backend is running:", data);
@@ -399,4 +477,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 backendStatus.className = 'status-bad';
             });
     }
+    
+    // Initialize components
+    initProtectionToggle();
+    loadStats();
+    setupTabNavigation();
+    setupButtonListeners();
+    checkBackendStatus();
 });
