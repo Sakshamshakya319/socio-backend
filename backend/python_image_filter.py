@@ -47,17 +47,32 @@ def filter_image(image_url):
                 "content_flags": results["content_flags"]
             }
         
-        # For potentially concerning content, we might want to add a warning
+        # For potentially concerning content, only add a warning if there are specific flags
         if results["overall_safety"] == "potentially_concerning":
-            return {
-                "filtered": False,
-                "warning": True,
-                "reason": f"Potentially concerning content: {', '.join(results['content_flags'])}",
-                "original": image_url,
-                "modified": image_url,
-                "safety_score": results["overall_safety"],
-                "content_flags": results["content_flags"]
-            }
+            # Check if there are any serious flags that warrant a warning
+            serious_flags = ["violence", "racy", "adult"]
+            has_serious_flags = any(flag in serious_flags for flag in results["content_flags"])
+            
+            if has_serious_flags:
+                return {
+                    "filtered": False,
+                    "warning": True,
+                    "reason": f"Potentially concerning content: {', '.join(results['content_flags'])}",
+                    "original": image_url,
+                    "modified": image_url,
+                    "safety_score": results["overall_safety"],
+                    "content_flags": results["content_flags"]
+                }
+            else:
+                # If no serious flags, treat as safe
+                return {
+                    "filtered": False,
+                    "warning": False,
+                    "reason": "No inappropriate content detected",
+                    "original": image_url,
+                    "modified": image_url,
+                    "safety_score": "safe"
+                }
         
         # Safe content
         return {

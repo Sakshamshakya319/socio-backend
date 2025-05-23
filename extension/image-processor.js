@@ -1,6 +1,3 @@
-// Enhanced Image Processor for Socio.io
-// This module provides robust client-side image filtering
-
 // Function to analyze image using the backend API
 async function analyzeImage(file) {
     try {
@@ -235,17 +232,18 @@ function processImageElement(element) {
         ];
         const isFromSafeSource = safeImageSources.some(source => lowerSrc.includes(source));
         
-        // Increase the random filter chance significantly for testing (70% chance)
-        // This will ensure more images get filtered for demonstration purposes
-        const randomFilterChance = 0.7; // 70% chance - extremely aggressive for testing
+        // Disable random filtering for production use
+        // Only filter images that are actually inappropriate
+        const randomFilterChance = 0.0; // 0% chance - no random filtering
         const shouldRandomlyFilter = Math.random() < randomFilterChance;
         
         // First apply a temporary blur for immediate feedback
         // This ensures users see something happening right away
         let tempBlurApplied = false;
         
-        // Apply temporary blur to suspicious images
-        if (containsExplicitKeyword || (!isFromSafeSource && !isVerySmallImage)) {
+        // Apply temporary blur only to images with explicit keywords in URL
+        // This is a more conservative approach to avoid over-filtering
+        if (containsExplicitKeyword) {
             debug("Applying temporary blur while waiting for backend decision");
             element.style.filter = "blur(10px)";
             element.style.transition = "filter 0.5s ease";
@@ -349,32 +347,41 @@ function processImageElement(element) {
                 if (updatedElement) {
                     debug("Applying fallback filter (backend unavailable)");
                     
-                    // Apply a moderate blur as a precaution
-                    updatedElement.style.filter = "blur(15px)";
-                    updatedElement.style.border = "2px solid orange";
-                    updatedElement.setAttribute('data-socioio-filtered', 'true');
-                    updatedElement.setAttribute('data-filter-reason', 'Backend analysis unavailable - applied precautionary filter');
+                    // Only apply fallback filtering if the image URL contains explicit keywords
+                    if (containsExplicitKeyword) {
+                        updatedElement.style.filter = "blur(15px)";
+                        updatedElement.style.border = "2px solid orange";
+                        updatedElement.setAttribute('data-socioio-filtered', 'true');
+                        updatedElement.setAttribute('data-filter-reason', 'Backend analysis unavailable - explicit keywords detected in URL');
+                    } else {
+                        // For non-suspicious images, don't apply any filter when backend is unavailable
+                        updatedElement.style.filter = "none";
+                        updatedElement.style.border = "none";
+                        updatedElement.setAttribute('data-socioio-filtered', 'false');
+                    }
                     
-                    // Update stats
-                    try {
-                        chrome.runtime.sendMessage({
-                            action: 'updateStats',
-                            type: 'images',
-                            count: 1
-                        }, function(response) {
-                            debug("Stats update response:", response);
-                        });
-                    } catch (e) {
-                        debug("Error updating stats:", e);
-                        
-                        // Try direct storage update as fallback
+                    // Only update stats if we actually applied a filter
+                    if (containsExplicitKeyword) {
                         try {
-                            chrome.storage.local.get(['imagesFiltered'], function(result) {
-                                const current = parseInt(result.imagesFiltered) || 0;
-                                chrome.storage.local.set({ 'imagesFiltered': current + 1 });
+                            chrome.runtime.sendMessage({
+                                action: 'updateStats',
+                                type: 'images',
+                                count: 1
+                            }, function(response) {
+                                debug("Stats update response:", response);
                             });
-                        } catch (storageError) {
-                            debug("Error updating storage:", storageError);
+                        } catch (e) {
+                            debug("Error updating stats:", e);
+                            
+                            // Try direct storage update as fallback
+                            try {
+                                chrome.storage.local.get(['imagesFiltered'], function(result) {
+                                    const current = parseInt(result.imagesFiltered) || 0;
+                                    chrome.storage.local.set({ 'imagesFiltered': current + 1 });
+                                });
+                            } catch (storageError) {
+                                debug("Error updating storage:", storageError);
+                            }
                         }
                     }
                 }
@@ -385,11 +392,19 @@ function processImageElement(element) {
             // Apply a fallback filtering strategy if there's an error in the API call
             const updatedElement = document.querySelector('.' + uniqueId);
             if (updatedElement) {
-                debug("Applying fallback filter (API error)");
-                updatedElement.style.filter = "blur(15px)";
-                updatedElement.style.border = "2px solid orange";
-                updatedElement.setAttribute('data-socioio-filtered', 'true');
-                updatedElement.setAttribute('data-filter-reason', 'API error - applied precautionary filter');
+                debug("Checking if fallback filter needed (API error)");
+                // Only apply fallback filtering if the image URL contains explicit keywords
+                if (containsExplicitKeyword) {
+                    updatedElement.style.filter = "blur(15px)";
+                    updatedElement.style.border = "2px solid orange";
+                    updatedElement.setAttribute('data-socioio-filtered', 'true');
+                    updatedElement.setAttribute('data-filter-reason', 'API error - explicit keywords detected in URL');
+                } else {
+                    // For non-suspicious images, don't apply any filter when API errors
+                    updatedElement.style.filter = "none";
+                    updatedElement.style.border = "none";
+                    updatedElement.setAttribute('data-socioio-filtered', 'false');
+                }
                 
                 // Update stats
                 updateStats('image');

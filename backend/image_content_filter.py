@@ -25,11 +25,11 @@ class ImageContentFilter:
         """Initialize the content filter with Google Cloud Vision API"""
         self._initialize_google_vision_client()
         self.confidence_thresholds = {
-            "adult": 0.7,
-            "violence": 0.6,
-            "racy": 0.7,
-            "medical": 0.8,
-            "spoof": 0.8,
+            "adult": 0.8,     # Increased from 0.7 to reduce false positives
+            "violence": 0.75, # Increased from 0.6 to reduce false positives
+            "racy": 0.8,      # Increased from 0.7 to reduce false positives
+            "medical": 0.9,   # Increased from 0.8 to reduce false positives
+            "spoof": 0.9,     # Increased from 0.8 to reduce false positives
         }
         self.blur_settings = {"unsafe": 30, "questionable": 15, "potentially_concerning": 8}
         self.offensive_terms = ["hate", "kill", "attack", "violence", "racist", "nazi"]
@@ -108,11 +108,22 @@ class ImageContentFilter:
         return results
 
     def _determine_safety(self, content_flags):
-        """Determine the overall safety rating"""
-        if "adult" in content_flags or "violence" in content_flags:
+        """Determine the overall safety rating with reduced false positives"""
+        # Only mark as unsafe if adult content is detected with high confidence
+        if "adult" in content_flags:
             return "unsafe"
-        elif any(flag.startswith("label:") for flag in content_flags):
+        # Violence alone is now considered questionable rather than unsafe
+        elif "violence" in content_flags:
             return "questionable"
+        # Label-based flags are now treated with less severity
+        elif any(flag.startswith("label:") for flag in content_flags):
+            # Check if the label contains highly concerning terms
+            highly_concerning = ["explicit", "nude", "pornography", "sexual"]
+            if any(any(term in flag.lower() for term in highly_concerning) for flag in content_flags):
+                return "questionable"
+            else:
+                return "potentially_concerning"
+        # Other flags are potentially concerning
         elif content_flags:
             return "potentially_concerning"
         return "safe"
