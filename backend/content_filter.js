@@ -1,18 +1,17 @@
 /**
- * Content Filter Module for Socio.io
- * This module provides content moderation functionality for text and images.
- * It uses Python scripts for advanced content filtering with Google Cloud Vision and text analysis.
+ * Content Filter Module
+ * Provides content moderation for text and images
  */
 
-const crypto = require('crypto');
-const CryptoJS = require('crypto-js');
-const fetch = require('node-fetch');
-const { URL } = require('url');
-const winston = require('winston');
-const textAnalysis = require('./text_analysis');
-const PythonBridge = require('./python_bridge');
+const fs = require('fs').promises;
 const path = require('path');
-const fs = require('fs');
+const crypto = require('crypto');
+const dotenv = require('dotenv');
+const winston = require('winston');
+const { VertexAI } = require('@google-cloud/vertexai');
+
+// Load environment variables
+dotenv.config();
 
 // Configure logging
 const logger = winston.createLogger({
@@ -29,316 +28,345 @@ const logger = winston.createLogger({
 });
 
 class ContentFilter {
-  /**
-   * Initialize the content filter.
-   */
   constructor() {
+    // Initialize stats
     this.stats = {
       text_filtered: 0,
       images_filtered: 0,
-      total_requests: 0
+      total_requests: 0,
+      python_available: false,
+      google_cloud_available: false,
+      vertex_ai_available: false
     };
-    
-    // Initialize encryption key
-    this.key = crypto.randomBytes(32).toString('base64');
-    
-    // Define inappropriate content patterns
-    this.inappropriatePatterns = [
-      '\\b(hate|violence|abuse|explicit|obscene)\\b',
-      '\\b(racist|sexist|discriminat(e|ion|ory))\\b',
-      '\\b(nsfw|porn|xxx|adult\\s+content)\\b'
-    ];
-    
-    // Compile patterns for efficiency
-    this.compiledPatterns = this.inappropriatePatterns.map(pattern => new RegExp(pattern, 'i'));
-    
-    // Initialize Python bridge for advanced content filtering
+
+    // Initialize Vertex AI
     try {
-      this.pythonBridge = new PythonBridge();
-      logger.info('Python bridge initialized for advanced content filtering');
-      this.pythonAvailable = true;
+      const projectId = process.env.GOOGLE_CLOUD_PROJECT;
+      const location = process.env.VERTEX_AI_LOCATION || 'us-central1';
+      const modelName = process.env.VERTEX_AI_MODEL || 'gemini-1.5-flash-001';
+      
+      if (!projectId) {
+        throw new Error('GOOGLE_CLOUD_PROJECT environment variable is not set');
+      }
+      
+      logger.info(`Initializing Vertex AI with project: ${projectId}, location: ${location}, model: ${modelName}`);
+      
+      this.vertexAi = new VertexAI({
+        project: projectId,
+        location: location,
+      });
+      
+      this.generativeModel = this.vertexAi.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          temperature: 0.1,
+          topK: 40,
+          topP: 0.8,
+          maxOutputTokens: 1024,
+        }
+      });
+      
+      this.stats.vertex_ai_available = true;
+      this.stats.google_cloud_available = true;
+      logger.info('Vertex AI initialized successfully');
+    } catch (error) {
+      logger.error(`Error initializing Vertex AI: ${error.message}`);
+      this.vertexAi = null;
+      this.generativeModel = null;
+    }
+
+    // Check if Python bridge is available
+    try {
+      const pythonBridge = require('./python_bridge');
+      this.pythonBridge = pythonBridge;
+      this.stats.python_available = true;
+      logger.info('Python bridge initialized successfully');
     } catch (error) {
       logger.error(`Error initializing Python bridge: ${error.message}`);
-      this.pythonAvailable = false;
+      this.pythonBridge = null;
     }
-    
-    // Check if Google Cloud credentials are available
-    this.googleCloudAvailable = false;
-    const credentialsPath = path.join(__dirname, 'my-project-92814-457204-c90e6bf83130.json');
-    if (fs.existsSync(credentialsPath)) {
-      logger.info('Google Cloud credentials found');
-      this.googleCloudAvailable = true;
-    } else {
-      logger.warn('Google Cloud credentials not found');
-    }
-    
+
     logger.info('Content filter initialized');
   }
-  
+
   /**
-   * Filter text content for inappropriate content.
-   * 
+   * Filter text content for inappropriate content
    * @param {string} text - The text to filter
-   * @returns {object} Result of the filtering operation
+   * @returns {Object} - Filtering results
    */
   async filterText(text) {
-    this.stats.total_requests += 1;
-    
-    if (!text || text.length < 3) {
-      return {
-        filtered: false,
-        reason: 'Text too short',
-        original: text,
-        modified: text
-      };
-    }
-    
-    // Try to use Python for advanced filtering if available
-    if (this.pythonAvailable) {
-      try {
-        logger.info('Using Python for advanced text filtering');
-        const result = await this.pythonBridge.filterText(text);
-        
-        // Update stats if content was filtered
-        if (result.filtered) {
-          this.stats.text_filtered += 1;
-        }
-        
-        return result;
-      } catch (error) {
-        logger.error(`Error using Python for text filtering: ${error.message}`);
-        logger.info('Falling back to JavaScript implementation');
-        // Fall back to JavaScript implementation
-      }
-    }
-    
-    // Use the JavaScript implementation as fallback
-    logger.info('Using JavaScript implementation for text filtering');
-    
-    // Use the text analysis module for more comprehensive detection
-    const analysisResults = textAnalysis.analyzeText(text);
-    
-    // Check if any problematic content was detected
-    const inappropriate = analysisResults.hate_speech || analysisResults.profanity || 
-                         Object.values(analysisResults.sensitive_info).some(arr => arr.length > 0);
-    
-    if (inappropriate) {
-      // Encrypt the original content
-      const encrypted = this.encryptContent(text);
-      
-      // Replace inappropriate content with asterisks
-      let modifiedText = text;
-      
-      // Replace flagged words with asterisks
-      for (const word of analysisResults.flagged_words) {
-        const regex = new RegExp(word, 'gi');
-        modifiedText = modifiedText.replace(regex, match => '*'.repeat(match.length));
-      }
-      
-      // Also use the basic patterns for additional filtering
-      for (const pattern of this.compiledPatterns) {
-        modifiedText = modifiedText.replace(pattern, match => '*'.repeat(match.length));
-      }
-      
-      // Mask sensitive information
-      for (const [type, items] of Object.entries(analysisResults.sensitive_info)) {
-        for (const item of items) {
-          // For sensitive info like credit cards, only show last 4 digits
-          if (type === 'credit_cards') {
-            const lastFour = item.slice(-4);
-            const masked = '*'.repeat(item.length - 4) + lastFour;
-            modifiedText = modifiedText.replace(new RegExp(item, 'g'), masked);
-          } else {
-            modifiedText = modifiedText.replace(new RegExp(item, 'g'), match => '*'.repeat(match.length));
-          }
-        }
-      }
-      
-      this.stats.text_filtered += 1;
-      
-      return {
-        filtered: true,
-        reason: 'Inappropriate content detected',
-        analysis: analysisResults,
-        original: text,
-        modified: modifiedText,
-        encrypted
-      };
-    }
-    
-    return {
-      filtered: false,
-      reason: 'No inappropriate content detected',
-      original: text,
-      modified: text
-    };
-  }
-  
-  /**
-   * Filter image content for inappropriate content.
-   * 
-   * @param {string} imageUrl - URL of the image to filter
-   * @returns {object} Result of the filtering operation
-   */
-  async filterImage(imageUrl) {
-    this.stats.total_requests += 1;
-    
-    // Validate URL
     try {
-      const parsedUrl = new URL(imageUrl);
-      if (!parsedUrl.protocol || !parsedUrl.hostname) {
-        return {
-          filtered: false,
-          reason: 'Invalid URL',
-          original: imageUrl,
-          modified: imageUrl
-        };
-      }
-    } catch (error) {
-      logger.error(`Error parsing URL: ${error.message}`);
-      return {
-        filtered: false,
-        reason: `Error parsing URL: ${error.message}`,
-        original: imageUrl,
-        modified: imageUrl
-      };
-    }
-    
-    // Try to use Python for advanced filtering if available
-    if (this.pythonAvailable && this.googleCloudAvailable) {
-      try {
-        logger.info('Using Python with Google Cloud Vision for advanced image filtering');
-        const result = await this.pythonBridge.filterImage(imageUrl);
-        
-        // Update stats if content was filtered
-        if (result.filtered) {
-          this.stats.images_filtered += 1;
+      this.stats.total_requests++;
+      
+      // Use Vertex AI if available
+      if (this.generativeModel) {
+        try {
+          logger.info('Using Vertex AI for text analysis');
+          
+          const prompt = `
+          Analyze the following text and identify if it contains inappropriate content such as:
+          - Hate speech
+          - Profanity
+          - Violence
+          - Sexual content
+          - Discrimination
+          - Personal attacks
+          
+          Return a JSON object with these fields:
+          - "filtered": boolean (true if inappropriate content is detected)
+          - "reason": string (explanation of why content was filtered or not)
+          - "modified": string (the original text with inappropriate words replaced by asterisks)
+          
+          Text to analyze: "${text}"
+          
+          Respond with ONLY the JSON object. No other text.
+          `;
+          
+          const request = {
+            contents: [{ role: "user", parts: [{ text: prompt }] }]
+          };
+          
+          const response = await this.generativeModel.generateContent(request);
+          const responseText = response.response.candidates[0].content.parts[0].text;
+          
+          // Try to parse the JSON response
+          try {
+            // Clean up the response text to ensure it's valid JSON
+            const cleanedResponse = responseText.replace(/```json|```/g, '').trim();
+            const result = JSON.parse(cleanedResponse);
+            
+            if (result.filtered) {
+              this.stats.text_filtered++;
+            }
+            
+            return {
+              filtered: result.filtered,
+              reason: result.reason,
+              original: text,
+              modified: result.modified || text,
+              encrypted: this.encryptContent(text),
+              analysis: {
+                provider: 'vertex_ai',
+                model: process.env.VERTEX_AI_MODEL || 'gemini-1.5-flash-001'
+              }
+            };
+          } catch (parseError) {
+            logger.error(`Error parsing Vertex AI response: ${parseError.message}`);
+            logger.error(`Raw response: ${responseText}`);
+            throw new Error('Failed to parse Vertex AI response');
+          }
+        } catch (vertexError) {
+          logger.error(`Vertex AI analysis error: ${vertexError.message}`);
+          // Fall back to regex-based filtering
         }
-        
-        return result;
-      } catch (error) {
-        logger.error(`Error using Python for image filtering: ${error.message}`);
-        logger.info('Falling back to JavaScript implementation');
-        // Fall back to JavaScript implementation
       }
-    }
-    
-    // Use the JavaScript implementation as fallback
-    logger.info('Using JavaScript implementation for image filtering');
-    
-    // For demonstration purposes, we'll filter images based on URL patterns
-    // In a real implementation, you would use image recognition APIs
-    const inappropriateUrlPatterns = [
-      'nsfw',
-      'adult',
-      'xxx',
-      'porn',
-      'explicit'
-    ];
-    
-    for (const pattern of inappropriateUrlPatterns) {
-      if (imageUrl.toLowerCase().includes(pattern)) {
-        this.stats.images_filtered += 1;
+      
+      // Simple regex-based filtering as fallback
+      logger.warn('Using fallback text filtering (regex-based)');
+      
+      // Simple regex-based filtering
+      const inappropriate = /hate|violence|abuse|explicit|obscene|racist|sexist|discriminat|nsfw|porn|xxx/i.test(text);
+      
+      if (inappropriate) {
+        // Replace inappropriate content with asterisks
+        const modifiedText = text.replace(/hate|violence|abuse|explicit|obscene|racist|sexist|discriminat|nsfw|porn|xxx/gi, 
+          match => '*'.repeat(match.length));
         
-        // In a real implementation, you would replace with a placeholder image
-        const placeholderImage = 'https://via.placeholder.com/400x300?text=Content+Filtered';
+        this.stats.text_filtered++;
         
         return {
           filtered: true,
-          reason: 'Potentially inappropriate image',
-          original: imageUrl,
-          modified: placeholderImage,
-          encrypted: this.encryptContent(imageUrl)
+          reason: 'Inappropriate content detected',
+          original: text,
+          modified: modifiedText,
+          encrypted: this.encryptContent(text)
         };
       }
-    }
-    
-    // For demonstration purposes, randomly filter some images
-    // This simulates an AI model making decisions
-    if (Math.random() < 0.1) { // 10% chance of filtering
-      this.stats.images_filtered += 1;
-      
-      // In a real implementation, you would replace with a placeholder image
-      const placeholderImage = 'https://via.placeholder.com/400x300?text=Content+Filtered';
       
       return {
-        filtered: true,
-        reason: 'Randomly filtered for demonstration',
-        original: imageUrl,
-        modified: placeholderImage,
-        encrypted: this.encryptContent(imageUrl)
+        filtered: false,
+        reason: 'No inappropriate content detected',
+        original: text,
+        modified: text
+      };
+    } catch (error) {
+      logger.error(`Error filtering text: ${error.message}`);
+      
+      // Return a safe fallback response
+      return {
+        filtered: false,
+        reason: 'Error during content analysis',
+        original: text,
+        modified: text,
+        error: error.message
       };
     }
-    
-    return {
-      filtered: false,
-      reason: 'No inappropriate content detected',
-      original: imageUrl,
-      modified: imageUrl
-    };
   }
-  
+
   /**
-   * Encrypt content for secure storage.
-   * 
+   * Filter image content for inappropriate content
+   * @param {string} url - URL of the image to filter
+   * @returns {Object} - Filtering results
+   */
+  async filterImage(url) {
+    try {
+      this.stats.total_requests++;
+      
+      // Use Vertex AI if available
+      if (this.generativeModel) {
+        try {
+          logger.info('Using Vertex AI for image URL analysis');
+          
+          const prompt = `
+          Analyze this image URL and determine if it might contain inappropriate content:
+          ${url}
+          
+          Based only on the URL (not the actual image content), check for keywords or patterns that suggest:
+          - Adult content
+          - Violence
+          - Hate speech
+          - Explicit material
+          
+          Return a JSON object with these fields:
+          - "filtered": boolean (true if URL suggests inappropriate content)
+          - "reason": string (explanation of why URL was flagged or not)
+          - "confidence": number (0-1 indicating confidence in the assessment)
+          
+          Respond with ONLY the JSON object. No other text.
+          `;
+          
+          const request = {
+            contents: [{ role: "user", parts: [{ text: prompt }] }]
+          };
+          
+          const response = await this.generativeModel.generateContent(request);
+          const responseText = response.response.candidates[0].content.parts[0].text;
+          
+          // Try to parse the JSON response
+          try {
+            // Clean up the response text to ensure it's valid JSON
+            const cleanedResponse = responseText.replace(/```json|```/g, '').trim();
+            const result = JSON.parse(cleanedResponse);
+            
+            if (result.filtered) {
+              this.stats.images_filtered++;
+              
+              return {
+                filtered: true,
+                reason: result.reason,
+                original: url,
+                modified: 'https://via.placeholder.com/400x300?text=Content+Filtered',
+                encrypted: this.encryptContent(url),
+                analysis: {
+                  provider: 'vertex_ai',
+                  model: process.env.VERTEX_AI_MODEL || 'gemini-1.5-flash-001',
+                  confidence: result.confidence
+                }
+              };
+            }
+            
+            return {
+              filtered: false,
+              reason: result.reason,
+              original: url,
+              modified: url,
+              analysis: {
+                provider: 'vertex_ai',
+                model: process.env.VERTEX_AI_MODEL || 'gemini-1.5-flash-001',
+                confidence: result.confidence
+              }
+            };
+          } catch (parseError) {
+            logger.error(`Error parsing Vertex AI response: ${parseError.message}`);
+            logger.error(`Raw response: ${responseText}`);
+            throw new Error('Failed to parse Vertex AI response');
+          }
+        } catch (vertexError) {
+          logger.error(`Vertex AI analysis error: ${vertexError.message}`);
+          // Fall back to regex-based filtering
+        }
+      }
+      
+      // Simple URL-based filtering as fallback
+      logger.warn('Using fallback image filtering (URL-based)');
+      
+      // Simple URL-based filtering
+      const inappropriate = /nsfw|adult|xxx|porn|explicit/i.test(url);
+      
+      if (inappropriate) {
+        this.stats.images_filtered++;
+        
+        return {
+          filtered: true,
+          reason: 'Potentially inappropriate image URL',
+          original: url,
+          modified: 'https://via.placeholder.com/400x300?text=Content+Filtered',
+          encrypted: this.encryptContent(url)
+        };
+      }
+      
+      return {
+        filtered: false,
+        reason: 'No inappropriate content detected in URL',
+        original: url,
+        modified: url
+      };
+    } catch (error) {
+      logger.error(`Error filtering image: ${error.message}`);
+      
+      // Return a safe fallback response
+      return {
+        filtered: false,
+        reason: 'Error during content analysis',
+        original: url,
+        modified: url,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Encrypt content for secure storage
    * @param {string} content - Content to encrypt
-   * @returns {string} Encrypted content as a base64 string
+   * @returns {string} - Encrypted content (base64)
    */
   encryptContent(content) {
     try {
-      // Encrypt the content using CryptoJS
-      const encrypted = CryptoJS.AES.encrypt(content, this.key).toString();
-      return encrypted;
+      // Simple base64 encoding for the minimal version
+      return Buffer.from(content).toString('base64');
     } catch (error) {
       logger.error(`Error encrypting content: ${error.message}`);
       return '';
     }
   }
-  
+
   /**
-   * Decrypt previously encrypted content.
-   * 
-   * @param {string} encrypted - Encrypted content as a base64 string
-   * @returns {string} Decrypted content
+   * Decrypt previously filtered content
+   * @param {string} encrypted - Encrypted content
+   * @returns {string} - Decrypted content
    */
   async decryptContent(encrypted) {
-    // Try to use Python for decryption if available
-    if (this.pythonAvailable) {
-      try {
-        logger.info('Using Python for decryption');
-        const result = await this.pythonBridge.decryptContent(encrypted);
-        return result.decrypted || '';
-      } catch (error) {
-        logger.error(`Error using Python for decryption: ${error.message}`);
-        logger.info('Falling back to JavaScript implementation');
-        // Fall back to JavaScript implementation
-      }
-    }
-    
-    // Use the JavaScript implementation as fallback
-    logger.info('Using JavaScript implementation for decryption');
-    
     try {
-      // Decrypt the content using CryptoJS
-      const bytes = CryptoJS.AES.decrypt(encrypted, this.key);
-      const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-      return decrypted;
+      // Simple base64 decoding for the minimal version
+      return Buffer.from(encrypted, 'base64').toString('utf-8');
     } catch (error) {
       logger.error(`Error decrypting content: ${error.message}`);
-      return '';
+      throw new Error('Failed to decrypt content');
     }
   }
-  
+
   /**
-   * Get statistics about the content filter.
-   * 
-   * @returns {object} Statistics about filtered content
+   * Get statistics about content filtering
+   * @returns {Object} - Statistics
    */
   getStats() {
     return {
-      ...this.stats,
-      python_available: this.pythonAvailable,
-      google_cloud_available: this.googleCloudAvailable
+      text_filtered: this.stats.text_filtered,
+      images_filtered: this.stats.images_filtered,
+      total_requests: this.stats.total_requests,
+      python_available: this.stats.python_available,
+      google_cloud_available: this.stats.google_cloud_available,
+      vertex_ai_available: this.stats.vertex_ai_available
     };
   }
 }

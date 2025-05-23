@@ -207,5 +207,6 @@ app.get('/status', (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   logger.info(`Starting Socio.io backend server on port ${PORT}`);
-  logger.info(`Google Cloud credentials: ${fs.existsSync(credentialsPath) ? 'Available' : 'Not available'}`);
+  const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  logger.info(`Google Cloud credentials: ${credentialsPath && fs.existsSync(credentialsPath) ? 'Available' : 'Not available'}`);
 });
